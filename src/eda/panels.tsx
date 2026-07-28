@@ -91,6 +91,10 @@ export function ProjectSidebar(
   const [maxResults, setMaxResults] = useState('20');
   const [venues, setVenues] = useState('');
   const [strongOnly, setStrongOnly] = useState(false);
+  // The new-project form is long; with several projects it fell below the fold
+  // and looked like there was no way to start one. Show a prominent button and
+  // open the form on demand (auto-open when the user has no projects yet).
+  const [showNew, setShowNew] = useState(chats.length === 0);
   const [sources, setSources] = useState<string[]>(ALL_SOURCES.map((s) => s.key));
 
   const input: React.CSSProperties = {
@@ -125,6 +129,18 @@ export function ProjectSidebar(
         </div>
       </div>
 
+      <button
+        onClick={() => setShowNew((v) => !v)}
+        style={{
+          background: showNew ? C.surface : C.accent, color: showNew ? C.text : C.accent_text,
+          border: `2px solid ${C.border}`, borderRadius: 10, padding: '10px 12px',
+          fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', gap: 8, width: '100%',
+        }}
+      >
+        <Plus className="w-4 h-4" /> {showNew ? 'Close new project' : 'New project'}
+      </button>
+
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ ...sectionLabel(C), flex: 1 }}>Projects</div>
@@ -157,6 +173,7 @@ export function ProjectSidebar(
         </div>
       </div>
 
+      {showNew && (
       <div>
         <div style={sectionLabel(C)}>New review</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
@@ -203,6 +220,7 @@ export function ProjectSidebar(
           </div>
         </div>
       </div>
+      )}
     </aside>
   );
 }
