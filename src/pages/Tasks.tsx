@@ -3,6 +3,7 @@ import { dataAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
 import { useNotifications } from '../components/Notifications';
+import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { CheckSquare, Plus, Trash2, X, Users, User } from 'lucide-react';
 
 interface Task {
@@ -656,10 +657,25 @@ export function Tasks() {
                     )}
 
                     {(task.completion_results || task.completion_values || task.completion_summary) && (
-                      <div className="mb-2 space-y-1 text-xs text-gray-700 dark:text-gray-200 border-t border-green-200 dark:border-green-800 pt-2 bg-green-50/40 -mx-1 px-2 rounded">
-                        {task.completion_results && <p><span className="font-medium">Results:</span> {task.completion_results}</p>}
-                        {task.completion_values && <p><span className="font-medium">Values:</span> {task.completion_values}</p>}
-                        {task.completion_summary && <p><span className="font-medium">Summary:</span> {task.completion_summary}</p>}
+                      <div className="mb-2 space-y-2 text-xs text-gray-700 dark:text-gray-200 border-t border-green-200 dark:border-green-800 pt-2 bg-green-50/40 -mx-1 px-2 rounded">
+                        {task.completion_results && (
+                          <div>
+                            <span className="font-medium">Results:</span>
+                            <div className="mt-1"><MarkdownRenderer>{task.completion_results}</MarkdownRenderer></div>
+                          </div>
+                        )}
+                        {task.completion_values && (
+                          <div>
+                            <span className="font-medium">Values:</span>
+                            <div className="mt-1"><MarkdownRenderer>{task.completion_values}</MarkdownRenderer></div>
+                          </div>
+                        )}
+                        {task.completion_summary && (
+                          <div>
+                            <span className="font-medium">Summary:</span>
+                            <div className="mt-1"><MarkdownRenderer>{task.completion_summary}</MarkdownRenderer></div>
+                          </div>
+                        )}
                       </div>
                     )}
 
