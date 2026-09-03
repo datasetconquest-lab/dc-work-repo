@@ -4,9 +4,58 @@ import { authMiddleware, adminMiddleware } from '../middleware.js';
 import type { AuthRequest } from '../middleware.js';
 import { User } from '../models/User.js';
 import { toObjectId } from '../utils/objectId.js';
+import { hashPassword, validatePassword } from '../auth.js';
 
 const router = Router();
 
+
+// Create new profile (admin only)
+router.post('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { email, password, full_name, employee_id, role } = req.body;
+
+    if (!email || !password || !full_name) {
+      return res.status(400).json({ error: 'Email, password, and full name are required' });
+    }
+
+    const validation = validatePassword(password);
+    if (!validation.isValid) {
+      return res.status(400).json({ error: validation.errors.join(' ') });
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({ error: 'A user with this email already exists' });
+    }
+
+    const hashedPassword = await hashPassword(password);
+    const validRoles = ['admin', 'member', 'team_lead'];
+    const assignedRole = validRoles.includes(role) ? role : 'member';
+
+    const newUser = new User({
+      email: email.toLowerCase(),
+      password_hash: hashedPassword,
+      full_name,
+      employee_id: employee_id || null,
+      role: assignedRole,
+      is_active: true
+    });
+
+    await newUser.save();
+
+    res.status(201).json({
+      id: newUser._id.toString(),
+      email: newUser.email,
+      full_name: newUser.full_name,
+      employee_id: (newUser as any).employee_id,
+      role: newUser.role,
+      is_active: newUser.is_active,
+      created_at: newUser.created_at
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to create user' });
+  }
+});
 
 // Get all profiles (admin only)
 router.get('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {

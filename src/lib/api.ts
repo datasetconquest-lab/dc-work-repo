@@ -224,6 +224,9 @@ export const dataAPI = {
 
   // === USER PROFILE ===
 
+  createUser: (payload: any) =>
+    apiCall('/profiles', { method: 'POST', body: payload }),
+
   getUserProfile: (userId: string) =>
     apiCall(`/profiles/${userId}`),
 
