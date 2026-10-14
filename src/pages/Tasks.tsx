@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
 import { useNotifications } from '../components/Notifications';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
-import { CheckSquare, Plus, Trash2, X, Users, User } from 'lucide-react';
+import { TaskGitHubManagerModal } from '../components/TaskGitHubManagerModal';
+import { CheckSquare, Plus, Trash2, X, Users, User, FolderGit2 } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -27,6 +28,7 @@ interface Task {
   completion_results?: string | null;
   completion_values?: string | null;
   completion_summary?: string | null;
+  github_repo?: string | null;
   // Actual work tracking
   started_at?: string | null;
   completed_at?: string | null;
@@ -48,6 +50,7 @@ export function Tasks() {
   const [loading, setLoading] = useState(true);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [taskType, setTaskType] = useState<'personal' | 'company' | 'all'>('all');
+  const [githubTask, setGithubTask] = useState<Task | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
   const emptyProcessingDetails = {
     dataset_name: '',
@@ -704,6 +707,23 @@ export function Tasks() {
                       </div>
                     </div>
 
+                    {/* GitHub Files Button */}
+                    {task.status !== 'cancelled' && (
+                      <button
+                        type="button"
+                        onClick={() => setGithubTask(task)}
+                        className="w-full mt-2.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <FolderGit2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>GitHub Files</span>
+                        {task.github_repo && (
+                          <span className="font-mono text-[11px] text-gray-500 dark:text-gray-400 truncate max-w-[150px]">
+                            · {task.github_repo}
+                          </span>
+                        )}
+                      </button>
+                    )}
+
                     {/* Status Update Buttons */}
                     {status !== 'completed' && (
                       <div className="mt-3 flex gap-2 flex-wrap">
@@ -1246,7 +1266,21 @@ export function Tasks() {
                   </section>
                 )}
 
-                <div className="flex gap-2 pt-4 border-t">
+                <div className="flex gap-2 pt-4 border-t flex-wrap">
+                  {viewingTask.status !== 'cancelled' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const task = viewingTask;
+                        setViewingTask(null);
+                        setGithubTask(task);
+                      }}
+                      className="flex-1 min-w-[140px] px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-650 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>GitHub Files</span>
+                    </button>
+                  )}
                   {canEdit(viewingTask) && (
                     <button
                       onClick={() => {
@@ -1269,6 +1303,25 @@ export function Tasks() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Task GitHub Manager Modal */}
+        {githubTask && (
+          <TaskGitHubManagerModal
+            task={{
+              id: githubTask.id,
+              title: githubTask.title,
+              github_repo: githubTask.github_repo,
+            }}
+            isAdmin={isAdmin}
+            onClose={() => setGithubTask(null)}
+            onRepoLinked={(taskId, repoName) => {
+              setTasks((prevTasks) =>
+                prevTasks.map((t) => (t.id === taskId ? { ...t, github_repo: repoName } : t))
+              );
+              setGithubTask((prev) => (prev && prev.id === taskId ? { ...prev, github_repo: repoName } : prev));
+            }}
+          />
         )}
       </div>
     </Layout>

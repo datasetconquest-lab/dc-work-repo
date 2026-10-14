@@ -19,6 +19,8 @@ export interface ITask extends Document {
     completion_results?: string;
     completion_values?: string;
     completion_summary?: string;
+    // Name of the private repo linked to this task
+    github_repo?: string;
     is_deleted: boolean;
     // When actual work on the task started (first transition out of "pending")
     started_at?: Date;
@@ -53,6 +55,7 @@ const TaskSchema = new Schema<ITask>({
     completion_results: { type: String, trim: true },
     completion_values: { type: String, trim: true },
     completion_summary: { type: String, trim: true },
+    github_repo: { type: String, trim: true },
     is_deleted: { type: Boolean, default: false },
     started_at: { type: Date },
     submitted_at: { type: Date },

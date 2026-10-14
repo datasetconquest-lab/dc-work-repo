@@ -32,6 +32,10 @@ JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
 JWT_EXPIRE=7d
 
 CORS_ORIGIN=http://localhost:5173
+
+# GitHub Integration (Token requires Administration + Contents read/write on the org)
+GITHUB_COMPANY_TOKEN=ghp_your_personal_access_token_here
+GITHUB_COMPANY_OWNER=datasetconquest-lab
 ```
 
 **⚠️ Important:** In production, `MONGODB_URI` and `JWT_SECRET` are required and the server will refuse to start without them.
