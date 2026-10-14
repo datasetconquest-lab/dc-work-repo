@@ -281,3 +281,130 @@ export const dataAPI = {
       body: is_done === undefined ? {} : { is_done },
     }),
 };
+
+// === GITHUB TASK MANAGER ===
+
+export interface GitHubTreeEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  size: number;
+  sha: string;
+}
+
+export interface GitHubTreeResponse {
+  repo: string;
+  owner: string;
+  path: string;
+  entries: GitHubTreeEntry[];
+  empty: boolean;
+  can_write: boolean;
+  html_url: string;
+}
+
+export interface GitHubFileResponse {
+  repo: string;
+  path: string;
+  name: string;
+  sha: string;
+  size: number;
+  can_write: boolean;
+  html_url: string;
+  content: string | null;
+  too_large?: boolean;
+  is_binary?: boolean;
+}
+
+export interface GitHubUploadResult {
+  path: string;
+  status: 'created' | 'updated' | 'failed';
+  error?: string;
+}
+
+export const githubAPI = {
+  createRepo: (taskId: string, name?: string): Promise<{ github_repo: string; html_url: string; owner: string }> =>
+    apiCall(`/github/task/${encodeURIComponent(taskId)}/create-repo`, {
+      method: 'POST',
+      body: name ? { name } : {},
+    }),
+
+  linkRepo: (taskId: string, repo: string): Promise<{ github_repo: string; html_url: string; owner: string }> =>
+    apiCall(`/github/task/${encodeURIComponent(taskId)}/link-repo`, {
+      method: 'POST',
+      body: { repo },
+    }),
+
+  getTree: (repo: string, path: string = ''): Promise<GitHubTreeResponse> => {
+    const qp = path ? `?path=${encodeURIComponent(path)}` : '';
+    return apiCall(`/github/repo/${encodeURIComponent(repo)}/tree${qp}`);
+  },
+
+  getFile: (repo: string, path: string): Promise<GitHubFileResponse> =>
+    apiCall(`/github/repo/${encodeURIComponent(repo)}/content?path=${encodeURIComponent(path)}`),
+
+  updateFile: (
+    repo: string,
+    data: { path: string; content: string; sha?: string; message?: string }
+  ): Promise<{ path: string; sha: string; commit_sha: string }> =>
+    apiCall(`/github/repo/${encodeURIComponent(repo)}/file`, {
+      method: 'PUT',
+      body: data,
+    }),
+
+  deleteFile: (
+    repo: string,
+    data: { path: string; sha: string; message?: string }
+  ): Promise<{ path: string; commit_sha: string }> =>
+    apiCall(`/github/repo/${encodeURIComponent(repo)}/file`, {
+      method: 'DELETE',
+      body: data,
+    }),
+
+  uploadFiles: async (
+    repo: string,
+    path: string,
+    files: File[],
+    message?: string
+  ): Promise<{ results: GitHubUploadResult[] }> => {
+    const formData = new FormData();
+    if (path) {
+      formData.append('path', path);
+    }
+    if (message) {
+      formData.append('message', message);
+    }
+    for (const file of files) {
+      formData.append('files', file);
+    }
+
+    const token = getStoredAuth()?.token;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/github/repo/${encodeURIComponent(repo)}/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const rawText = await response.text();
+    let parsed: any = null;
+    if (rawText) {
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        parsed = { error: rawText };
+      }
+    }
+
+    if (!response.ok) {
+      const msg = parsed?.error || parsed?.message || `Upload failed with status ${response.status}`;
+      throw new Error(msg);
+    }
+
+    return parsed;
+  },
+};
+

@@ -280,6 +280,7 @@ async function initializeRoutes() {
     const notificationsModule = await import('./routes/notifications.js');
     const dataModule = await import('./routes/data.js');
     const todosModule = await import('./routes/todos.js');
+    const githubModule = await import('./routes/github.js');
 
     app.use('/api/auth', authModule.default);
     app.use('/api/profiles', profileModule.default);
@@ -295,6 +296,7 @@ async function initializeRoutes() {
     app.use('/api/notifications', notificationsModule.default);
     app.use('/api/data', dataModule.default);
     app.use('/api/todos', todosModule.default);
+    app.use('/api/github', githubModule.default);
 
     // EDA portal routes are OPTIONAL: they exist only in the desktop (exe) build,
     // which also bundles the local Python EDA service. On the website (Render) the
