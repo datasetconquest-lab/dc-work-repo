@@ -1,8 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   FolderGit2,
   Folder,
   File as FileIcon,
+  FileCode,
+  FileText,
+  FileSpreadsheet,
+  FileImage,
   ExternalLink,
   Lock,
   Upload,
@@ -19,6 +23,9 @@ import {
   X,
   ArrowLeft,
   CheckCircle2,
+  Search,
+  Plus,
+  GitBranch,
 } from 'lucide-react';
 import {
   githubAPI,
@@ -58,6 +65,41 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getFileIcon(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'ts':
+    case 'tsx':
+    case 'js':
+    case 'jsx':
+    case 'py':
+    case 'html':
+    case 'css':
+    case 'json':
+    case 'sql':
+      return <FileCode className="w-4 h-4 text-emerald-500 flex-shrink-0" />;
+    case 'md':
+    case 'txt':
+    case 'doc':
+    case 'docx':
+    case 'pdf':
+      return <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />;
+    case 'csv':
+    case 'xlsx':
+    case 'xls':
+      return <FileSpreadsheet className="w-4 h-4 text-teal-500 flex-shrink-0" />;
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'svg':
+    case 'gif':
+    case 'webp':
+      return <FileImage className="w-4 h-4 text-purple-500 flex-shrink-0" />;
+    default:
+      return <FileIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />;
+  }
+}
+
 export function TaskGitHubManagerModal({
   task,
   isAdmin,
@@ -70,6 +112,7 @@ export function TaskGitHubManagerModal({
   const [canWrite, setCanWrite] = useState<boolean>(true);
   const [isEmptyRepo, setIsEmptyRepo] = useState<boolean>(false);
   const [loadingTree, setLoadingTree] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   // File Viewer / Editor state
   const [selectedFile, setSelectedFile] = useState<GitHubFileResponse | null>(null);
@@ -78,6 +121,12 @@ export function TaskGitHubManagerModal({
   const [editContent, setEditContent] = useState<string>('');
   const [commitMessage, setCommitMessage] = useState<string>('');
   const [committing, setCommitting] = useState<boolean>(false);
+
+  // New File modal state
+  const [showNewFileModal, setShowNewFileModal] = useState<boolean>(false);
+  const [newFileName, setNewFileName] = useState<string>('');
+  const [newFileContent, setNewFileContent] = useState<string>('');
+  const [creatingFile, setCreatingFile] = useState<boolean>(false);
 
   // Upload state
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -112,6 +161,8 @@ export function TaskGitHubManagerModal({
       if (e.key === 'Escape') {
         if (deleteTarget) {
           setDeleteTarget(null);
+        } else if (showNewFileModal) {
+          setShowNewFileModal(false);
         } else if (selectedFile) {
           setSelectedFile(null);
           setIsEditing(false);
@@ -122,9 +173,9 @@ export function TaskGitHubManagerModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteTarget, selectedFile, onClose]);
+  }, [deleteTarget, showNewFileModal, selectedFile, onClose]);
 
-  // Load tree when repo or currentPath changes
+  // Load tree
   const loadTree = async (targetRepo: string = repo || '', targetPath: string = currentPath) => {
     if (!targetRepo) return;
     setLoadingTree(true);
@@ -166,7 +217,7 @@ export function TaskGitHubManagerModal({
     }
   };
 
-  // Link repo handler (Admin only)
+  // Link repo handler
   const handleLinkRepo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!linkRepoName.trim()) return;
@@ -216,7 +267,6 @@ export function TaskGitHubManagerModal({
         message: commitMessage.trim() || `Update ${selectedFile.path}`,
       });
       setSuccess(`Committed changes to ${selectedFile.name}`);
-      // Re-fetch file to update sha
       const updated = await githubAPI.getFile(repo, selectedFile.path);
       setSelectedFile(updated);
       setEditContent(updated.content || '');
@@ -226,6 +276,31 @@ export function TaskGitHubManagerModal({
       setError(err?.message || 'Failed to commit changes');
     } finally {
       setCommitting(false);
+    }
+  };
+
+  // Create New File handler
+  const handleCreateNewFile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!repo || !newFileName.trim()) return;
+    const fullPath = currentPath ? `${currentPath}/${newFileName.trim()}` : newFileName.trim();
+    setCreatingFile(true);
+    setError(null);
+    try {
+      await githubAPI.updateFile(repo, {
+        path: fullPath,
+        content: newFileContent,
+        message: `Create ${newFileName.trim()}`,
+      });
+      setSuccess(`Created file ${newFileName.trim()}`);
+      setShowNewFileModal(false);
+      setNewFileName('');
+      setNewFileContent('');
+      await loadTree();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create new file');
+    } finally {
+      setCreatingFile(false);
     }
   };
 
@@ -243,7 +318,6 @@ export function TaskGitHubManagerModal({
       setSuccess(`Deleted ${deleteTarget.name}`);
       setDeleteTarget(null);
 
-      // If viewing this file, close viewer
       if (selectedFile?.path === deleteTarget.path) {
         setSelectedFile(null);
         setIsEditing(false);
@@ -267,9 +341,9 @@ export function TaskGitHubManagerModal({
       const res = await githubAPI.uploadFiles(repo, currentPath, fileArray);
       const failed = res.results.filter((r) => r.status === 'failed');
       if (failed.length > 0) {
-        setError(`Some files failed to commit: ${failed.map((f) => f.path).join(', ')}`);
+        setError(`Some files failed: ${failed.map((f) => f.path).join(', ')}`);
       } else {
-        setSuccess(`Successfully committed ${fileArray.length} file(s) to GitHub!`);
+        setSuccess(`Committed ${fileArray.length} file(s) to GitHub!`);
       }
       await loadTree();
     } catch (err: any) {
@@ -280,85 +354,79 @@ export function TaskGitHubManagerModal({
     }
   };
 
-  // Drag and drop handlers
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (canWrite) setIsDragging(true);
-  };
+  // Filtered files
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return treeEntries;
+    const query = searchQuery.toLowerCase().trim();
+    return treeEntries.filter((item) => item.name.toLowerCase().includes(query));
+  }, [treeEntries, searchQuery]);
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (!canWrite) return;
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFilesUpload(e.dataTransfer.files);
-    }
-  };
-
-  // Breadcrumbs parsing
   const pathSegments = currentPath ? currentPath.split('/') : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-4xl h-[90vh] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-gray-900 dark:text-gray-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="relative w-full max-w-4xl h-[92vh] max-h-[860px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-slate-800 dark:text-slate-100">
         
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50 flex-shrink-0">
+        {/* Top Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200/80 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-sm flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center flex-shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-sm flex-shrink-0">
               <FolderGit2 className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-semibold truncate tracking-tight">
-                  {repo ? repo : 'Task GitHub Repository'}
+                <h2 className="text-sm sm:text-base font-semibold truncate tracking-tight text-slate-900 dark:text-white">
+                  {repo || 'Task GitHub Repository'}
                 </h2>
                 {repo && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                     <Lock className="w-3 h-3" />
                     Private
                   </span>
                 )}
+                {repo && (
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                    <GitBranch className="w-3 h-3 text-slate-400" />
+                    main
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                Task: {task.title}
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                {task.title}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             {repo && (
               <>
                 <a
                   href={`https://github.com/datasetconquest-lab/${repo}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors shadow-sm"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors shadow-xs"
                   title="View on GitHub"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
                   <span className="hidden sm:inline">GitHub</span>
                 </a>
                 <button
                   type="button"
                   onClick={() => loadTree()}
                   disabled={loadingTree}
-                  className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   title="Refresh files"
                 >
                   <RefreshCw className={`w-4 h-4 ${loadingTree ? 'animate-spin' : ''}`} />
                 </button>
               </>
             )}
+            <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1" />
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="Close modal"
             >
               <X className="w-5 h-5" />
             </button>
@@ -367,98 +435,92 @@ export function TaskGitHubManagerModal({
 
         {/* Alerts */}
         {error && (
-          <div className="px-6 py-2.5 bg-red-50 dark:bg-red-950/40 border-b border-red-200 dark:border-red-900/50 flex items-center justify-between text-xs text-red-700 dark:text-red-300">
+          <div className="px-5 py-2.5 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between text-xs text-red-600 dark:text-red-400 flex-shrink-0">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>{error}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              className="text-red-500 hover:text-red-700"
-            >
+            <button type="button" onClick={() => setError(null)} className="hover:opacity-75">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
         {success && (
-          <div className="px-6 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-200 dark:border-emerald-900/50 flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-300">
+          <div className="px-5 py-2.5 bg-emerald-500/10 border-b border-emerald-500/20 flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 flex-shrink-0">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
               <span>{success}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => setSuccess(null)}
-              className="text-emerald-500 hover:text-emerald-700"
-            >
+            <button type="button" onClick={() => setSuccess(null)} className="hover:opacity-75">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col">
+        {/* Modal Main Area */}
+        <div className="flex-1 overflow-hidden p-4 sm:p-5 flex flex-col bg-slate-50/50 dark:bg-slate-900/40">
           {!repo ? (
-            /* EMPTY STATE: No Repository Linked */
-            <div className="max-w-lg mx-auto my-auto w-full py-8 text-center flex flex-col items-center">
-              <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4">
-                <FolderGit2 className="w-8 h-8" />
+            /* EMPTY STATE: Create Repository */
+            <div className="max-w-md mx-auto my-auto w-full py-8 text-center flex flex-col items-center">
+              <div className="w-14 h-14 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 ring-8 ring-blue-500/5">
+                <FolderGit2 className="w-7 h-7" />
               </div>
-              <h3 className="text-xl font-bold mb-2">No Repository Linked Yet</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                Create a private repository under the company GitHub organization (
-                <span className="font-mono text-xs font-semibold text-gray-700 dark:text-gray-300">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1.5">
+                No Repository Linked
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
+                Create a private repository under the company GitHub (
+                <span className="font-mono text-slate-700 dark:text-slate-300 font-medium">
                   datasetconquest-lab
                 </span>
-                ) to upload code, documents, and manage files for this task.
+                ) to manage and version control files for this task.
               </p>
 
-              {/* Create Repo Form */}
-              <form onSubmit={handleCreateRepo} className="w-full space-y-4">
+              <form onSubmit={handleCreateRepo} className="w-full space-y-3.5">
                 <div className="text-left">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
                     Repository Name
                   </label>
-                  <input
-                    type="text"
-                    value={newRepoName}
-                    onChange={(e) => setNewRepoName(e.target.value)}
-                    placeholder="e.g. customer-churn-model"
-                    className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono shadow-sm"
-                    required
-                  />
-                  <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500 font-mono">
-                    Will be created as datasetconquest-lab/{toRepoName(newRepoName) || '<name>'}
-                  </p>
+                  <div className="flex rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden shadow-xs focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent">
+                    <span className="inline-flex items-center px-3 text-xs text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/80 border-r border-slate-200 dark:border-slate-700 select-none">
+                      datasetconquest-lab/
+                    </span>
+                    <input
+                      type="text"
+                      value={newRepoName}
+                      onChange={(e) => setNewRepoName(e.target.value)}
+                      placeholder="repo-name"
+                      className="flex-1 px-3 py-2 text-xs font-mono bg-transparent text-slate-900 dark:text-white focus:outline-none"
+                      required
+                    />
+                  </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={creatingRepo || !newRepoName.trim()}
-                  className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-xs flex items-center justify-center gap-2 transition-all shadow-sm hover:shadow disabled:opacity-50"
                 >
                   {creatingRepo ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       Creating Private Repository...
                     </>
                   ) : (
                     <>
-                      <Lock className="w-4 h-4" />
+                      <Lock className="w-3.5 h-3.5" />
                       Create Private Repository
                     </>
                   )}
                 </button>
               </form>
 
-              {/* Admin Link Existing Repo Option */}
               {isAdmin && (
-                <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-800 w-full text-left">
-                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Link2 className="w-3.5 h-3.5" />
-                    Admin Option: Link Existing Repo
+                <div className="mt-8 pt-5 border-t border-slate-200 dark:border-slate-800 w-full text-left">
+                  <h4 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <Link2 className="w-3 h-3" />
+                    Admin: Link Existing Repo
                   </h4>
                   <form onSubmit={handleLinkRepo} className="flex gap-2">
                     <input
@@ -466,45 +528,46 @@ export function TaskGitHubManagerModal({
                       value={linkRepoName}
                       onChange={(e) => setLinkRepoName(e.target.value)}
                       placeholder="existing-repo-name"
-                      className="flex-1 px-3 py-2 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-mono"
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                     <button
                       type="submit"
                       disabled={linkingRepo || !linkRepoName.trim()}
-                      className="px-3 py-2 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 transition-colors disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-800 dark:text-slate-200 transition-colors disabled:opacity-50"
                     >
-                      {linkingRepo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Link'}
+                      {linkingRepo ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Link'}
                     </button>
                   </form>
                 </div>
               )}
             </div>
           ) : selectedFile ? (
-            /* FILE VIEWER / EDITOR */
-            <div className="flex-1 flex flex-col h-full">
-              <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-gray-800 mb-4 flex-shrink-0">
-                <div className="flex items-center gap-2">
+            /* FILE VIEWER & CODE EDITOR */
+            <div className="flex-1 flex flex-col h-full bg-white dark:bg-slate-950 rounded-xl border border-slate-200/90 dark:border-slate-800 overflow-hidden shadow-xs">
+              {/* Viewer Sub-Header */}
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex-shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <button
                     type="button"
                     onClick={() => {
                       setSelectedFile(null);
                       setIsEditing(false);
                     }}
-                    className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    Back to files
+                    <span>Back</span>
                   </button>
-                  <span className="text-gray-300 dark:text-gray-700">|</span>
-                  <span className="font-mono text-xs font-medium truncate max-w-md">
+                  <span className="text-slate-300 dark:text-slate-700">/</span>
+                  <span className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-sm">
                     {selectedFile.path}
                   </span>
-                  <span className="text-xs text-gray-400 font-mono">
+                  <span className="text-[11px] text-slate-400 font-mono">
                     ({formatBytes(selectedFile.size)})
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {selectedFile.can_write && !selectedFile.too_large && !selectedFile.is_binary && (
                     <>
                       {isEditing ? (
@@ -515,15 +578,15 @@ export function TaskGitHubManagerModal({
                               setIsEditing(false);
                               setEditContent(selectedFile.content || '');
                             }}
-                            className="px-2.5 py-1 text-xs rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                            className="px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                           >
-                            Cancel Edit
+                            Cancel
                           </button>
                           <button
                             type="button"
                             onClick={handleSaveFile}
                             disabled={committing || editContent === selectedFile.content}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 shadow-xs"
                           >
                             {committing ? (
                               <Loader2 className="w-3 h-3 animate-spin" />
@@ -537,10 +600,10 @@ export function TaskGitHubManagerModal({
                         <button
                           type="button"
                           onClick={() => setIsEditing(true)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-750 transition-colors"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
-                          Edit File
+                          <span>Edit</span>
                         </button>
                       )}
                     </>
@@ -548,70 +611,70 @@ export function TaskGitHubManagerModal({
                 </div>
               </div>
 
+              {/* Viewer / Editor Body */}
               {selectedFile.too_large ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-gray-200 dark:border-gray-800">
-                  <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
-                  <h4 className="text-base font-semibold mb-1">File is Too Large to Preview</h4>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                    Files larger than 2 MB cannot be viewed directly in the in-app editor.
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                  <AlertTriangle className="w-9 h-9 text-amber-500 mb-2" />
+                  <h4 className="text-sm font-semibold mb-1">File Too Large to Preview (&gt; 2 MB)</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                    Large files should be viewed directly on GitHub.
                   </p>
                   <a
                     href={selectedFile.html_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                     Open on GitHub
                   </a>
                 </div>
               ) : selectedFile.is_binary ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-gray-200 dark:border-gray-800">
-                  <FileIcon className="w-10 h-10 text-blue-500 mb-3" />
-                  <h4 className="text-base font-semibold mb-1">Binary File</h4>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                    Binary files (images, audio, archives) cannot be edited as plain text.
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                  <FileIcon className="w-9 h-9 text-blue-500 mb-2" />
+                  <h4 className="text-sm font-semibold mb-1">Binary File</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
+                    Binary documents cannot be previewed in text mode.
                   </p>
                   <a
                     href={selectedFile.html_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
-                    View File on GitHub
+                    View on GitHub
                   </a>
                 </div>
               ) : isEditing ? (
-                <div className="flex-1 flex flex-col min-h-0 space-y-3">
-                  <div className="flex-1 min-h-[300px]">
-                    <textarea
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                      className="w-full h-full p-4 font-mono text-xs rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
+                <div className="flex-1 flex flex-col min-h-0 bg-slate-950 text-slate-100">
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className="flex-1 w-full p-4 font-mono text-xs bg-transparent text-slate-100 resize-none focus:outline-none leading-relaxed"
+                    spellCheck={false}
+                    placeholder="Enter file contents..."
+                  />
+                  <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center gap-2">
                     <input
                       type="text"
                       value={commitMessage}
                       onChange={(e) => setCommitMessage(e.target.value)}
                       placeholder={`Update ${selectedFile.name}`}
-                      className="flex-1 px-3 py-2 text-xs rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-mono"
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-slate-700 bg-slate-800 text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 overflow-auto rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950 p-4">
-                  <table className="w-full border-collapse font-mono text-xs">
+                <div className="flex-1 overflow-auto p-3 font-mono text-xs bg-slate-50/50 dark:bg-slate-950/70">
+                  <table className="w-full border-collapse">
                     <tbody>
                       {(selectedFile.content || '').split('\n').map((line, idx) => (
-                        <tr key={idx} className="hover:bg-gray-100 dark:hover:bg-gray-900/60">
-                          <td className="w-12 text-right pr-4 text-gray-400 select-none py-0.5">
+                        <tr key={idx} className="hover:bg-blue-500/5 transition-colors">
+                          <td className="w-10 text-right pr-3.5 text-slate-400/80 dark:text-slate-600 select-none py-0.5 text-[11px]">
                             {idx + 1}
                           </td>
-                          <td className="whitespace-pre py-0.5 text-gray-800 dark:text-gray-200">
+                          <td className="whitespace-pre py-0.5 text-slate-800 dark:text-slate-200 leading-relaxed">
                             {line || ' '}
                           </td>
                         </tr>
@@ -622,52 +685,65 @@ export function TaskGitHubManagerModal({
               )}
             </div>
           ) : (
-            /* FOLDER BROWSER & ACTIONS */
+            /* FOLDER BROWSER & FILE LIST */
             <div
-              className={`flex-1 flex flex-col min-h-0 relative ${
-                isDragging ? 'ring-2 ring-blue-500 ring-offset-2 rounded-xl' : ''
+              className={`flex-1 flex flex-col min-h-0 relative bg-white dark:bg-slate-900 rounded-xl border border-slate-200/90 dark:border-slate-800 overflow-hidden shadow-xs ${
+                isDragging ? 'ring-2 ring-blue-500 ring-offset-2' : ''
               }`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (canWrite) setIsDragging(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                if (!canWrite) return;
+                if (e.dataTransfer.files?.length > 0) {
+                  handleFilesUpload(e.dataTransfer.files);
+                }
+              }}
             >
               {/* Drag & Drop Overlay */}
               {isDragging && (
-                <div className="absolute inset-0 z-20 bg-blue-50/90 dark:bg-blue-950/90 border-2 border-dashed border-blue-500 rounded-xl flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none">
-                  <Upload className="w-12 h-12 text-blue-600 dark:text-blue-400 mb-2 animate-bounce" />
-                  <p className="text-base font-semibold text-blue-900 dark:text-blue-200">
-                    Drop files to upload to /{currentPath}
+                <div className="absolute inset-0 z-20 bg-blue-500/10 dark:bg-blue-500/20 border-2 border-dashed border-blue-500 rounded-xl flex flex-col items-center justify-center backdrop-blur-xs pointer-events-none">
+                  <Upload className="w-10 h-10 text-blue-600 dark:text-blue-400 mb-2 animate-bounce" />
+                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+                    Drop files to upload to /{currentPath || ''}
                   </p>
                 </div>
               )}
 
-              {/* Uploading Spinner Overlay */}
+              {/* Uploading Overlay */}
               {uploading && (
-                <div className="absolute inset-0 z-30 bg-black/40 backdrop-blur-sm rounded-xl flex flex-col items-center justify-center text-white">
-                  <Loader2 className="w-10 h-10 animate-spin mb-3 text-blue-400" />
-                  <p className="text-sm font-medium">Uploading and committing files to GitHub...</p>
+                <div className="absolute inset-0 z-30 bg-slate-950/50 backdrop-blur-xs rounded-xl flex flex-col items-center justify-center text-white">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
+                  <p className="text-xs font-medium">Committing files to GitHub...</p>
                 </div>
               )}
 
-              {/* Loading File Spinner Overlay */}
+              {/* Loading File Overlay */}
               {loadingFile && (
-                <div className="absolute inset-0 z-30 bg-black/40 backdrop-blur-sm rounded-xl flex flex-col items-center justify-center text-white">
-                  <Loader2 className="w-10 h-10 animate-spin mb-3 text-blue-400" />
-                  <p className="text-sm font-medium">Loading file from GitHub...</p>
+                <div className="absolute inset-0 z-30 bg-slate-950/40 backdrop-blur-xs rounded-xl flex flex-col items-center justify-center text-white">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
+                  <p className="text-xs font-medium">Loading file content...</p>
                 </div>
               )}
 
-              {/* Top Bar: Breadcrumbs & Action Buttons */}
-              <div className="flex items-center justify-between gap-4 pb-4 mb-2 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
+              {/* Sleek Toolbar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 p-3 border-b border-slate-200/90 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/70 flex-shrink-0">
                 {/* Breadcrumbs */}
-                <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 overflow-x-auto py-1">
+                <div className="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400 overflow-x-auto py-0.5 scrollbar-none">
                   <button
                     type="button"
                     onClick={() => setCurrentPath('')}
-                    className="flex items-center gap-1 font-semibold hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                    className="flex items-center gap-1 px-1.5 py-1 rounded-md font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
                   >
-                    <Home className="w-3.5 h-3.5" />
-                    <span>{repo}</span>
+                    <Home className="w-3.5 h-3.5 text-blue-500" />
+                    <span>root</span>
                   </button>
 
                   {pathSegments.map((segment, index) => {
@@ -675,12 +751,14 @@ export function TaskGitHubManagerModal({
                     const isLast = index === pathSegments.length - 1;
                     return (
                       <React.Fragment key={segPath}>
-                        <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        <ChevronRight className="w-3 h-3 text-slate-400 flex-shrink-0" />
                         <button
                           type="button"
                           onClick={() => setCurrentPath(segPath)}
-                          className={`font-mono truncate max-w-[140px] hover:text-blue-600 dark:hover:text-blue-400 transition-colors ${
-                            isLast ? 'font-semibold text-gray-900 dark:text-gray-100' : ''
+                          className={`font-mono px-1.5 py-0.5 rounded-md truncate max-w-[120px] transition-colors ${
+                            isLast
+                              ? 'font-semibold text-slate-900 dark:text-white bg-slate-200/50 dark:bg-slate-800'
+                              : 'hover:bg-slate-200/60 dark:hover:bg-slate-800'
                           }`}
                         >
                           {segment}
@@ -690,92 +768,116 @@ export function TaskGitHubManagerModal({
                   })}
                 </div>
 
-                {/* Upload Button */}
-                {canWrite ? (
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Right Actions: Search + Upload + New File */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => handleFilesUpload(e.target.files)}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Filter files..."
+                      className="w-32 sm:w-40 pl-8 pr-2.5 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
                     />
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-sm disabled:opacity-50"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Upload files</span>
-                    </button>
                   </div>
-                ) : (
-                  <span className="text-xs text-gray-400 italic">Read-only access</span>
-                )}
+
+                  {canWrite && (
+                    <>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => handleFilesUpload(e.target.files)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewFileModal(true)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors shadow-2xs"
+                        title="Create new file directly"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">New File</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs disabled:opacity-50"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload</span>
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* File List */}
               <div className="flex-1 overflow-y-auto">
                 {loadingTree ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-gray-400">
-                    <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-2" />
-                    <span className="text-xs">Loading files from GitHub...</span>
+                  <div className="py-14 flex flex-col items-center justify-center text-slate-400">
+                    <Loader2 className="w-7 h-7 animate-spin text-blue-500 mb-2" />
+                    <span className="text-xs">Fetching repository tree...</span>
                   </div>
                 ) : isEmptyRepo ? (
-                  <div className="py-16 text-center flex flex-col items-center justify-center border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-2xl">
-                    <FolderGit2 className="w-12 h-12 text-gray-300 dark:text-gray-600 mb-3" />
-                    <h4 className="text-base font-semibold mb-1">This repository is empty</h4>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 max-w-sm">
-                      Upload your initial project files or code above to populate this repository.
+                  <div className="py-16 text-center flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mb-2">
+                      <FolderGit2 className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-semibold mb-1">Repository is Empty</h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 max-w-xs">
+                      Drag and drop files here or click Upload above to get started.
                     </p>
                   </div>
-                ) : treeEntries.length === 0 ? (
-                  <div className="py-12 text-center text-gray-400">
-                    <p className="text-xs">This folder is empty.</p>
+                ) : filteredEntries.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400 text-xs">
+                    {searchQuery ? `No files match "${searchQuery}"` : 'This folder is empty.'}
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden divide-y divide-gray-100 dark:divide-gray-800">
-                    {/* Go up row if in subfolder */}
-                    {currentPath && (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {/* Go up row */}
+                    {currentPath && !searchQuery && (
                       <div
                         onClick={() => {
                           const parts = currentPath.split('/');
                           parts.pop();
                           setCurrentPath(parts.join('/'));
                         }}
-                        className="px-4 py-2.5 flex items-center gap-3 text-xs font-mono text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer select-none transition-colors"
+                        className="px-4 py-2.5 flex items-center gap-3 text-xs font-mono text-slate-600 dark:text-slate-400 hover:bg-slate-100/60 dark:hover:bg-slate-800/40 cursor-pointer select-none transition-colors"
                       >
                         <Folder className="w-4 h-4 text-blue-500" />
-                        <span>.. (Go up)</span>
+                        <span className="font-semibold">.. (Parent directory)</span>
                       </div>
                     )}
 
-                    {treeEntries.map((entry) => (
+                    {filteredEntries.map((entry) => (
                       <div
                         key={entry.path}
-                        className="px-4 py-2.5 flex items-center justify-between text-xs hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group"
+                        className="px-4 py-2.5 flex items-center justify-between text-xs hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group"
                       >
                         <div
                           className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
                           onClick={() => {
                             if (entry.type === 'dir') {
                               setCurrentPath(entry.path);
+                              setSearchQuery('');
                             } else {
                               handleOpenFile(entry);
                             }
                           }}
                         >
                           {entry.type === 'dir' ? (
-                            <Folder className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                            <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
                           ) : (
-                            <FileIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            getFileIcon(entry.name)
                           )}
                           <span
                             className={`truncate font-mono ${
                               entry.type === 'dir'
-                                ? 'font-semibold text-gray-900 dark:text-gray-100 hover:underline'
-                                : 'text-gray-700 dark:text-gray-300'
+                                ? 'font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400'
+                                : 'text-slate-700 dark:text-slate-300'
                             }`}
                           >
                             {entry.name}
@@ -784,19 +886,19 @@ export function TaskGitHubManagerModal({
 
                         <div className="flex items-center gap-4 flex-shrink-0">
                           {entry.type === 'file' && (
-                            <span className="text-[11px] font-mono text-gray-400">
+                            <span className="text-[11px] font-mono text-slate-400">
                               {formatBytes(entry.size)}
                             </span>
                           )}
 
-                          <div className="flex items-center gap-1 opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1 opacity-70 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                             {entry.type === 'file' ? (
                               <>
                                 <button
                                   type="button"
                                   onClick={() => handleOpenFile(entry)}
-                                  className="p-1 text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 rounded"
-                                  title="View or Edit"
+                                  className="p-1 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 rounded hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors"
+                                  title="View file"
                                 >
                                   {canWrite ? <Edit3 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                 </button>
@@ -804,7 +906,7 @@ export function TaskGitHubManagerModal({
                                   <button
                                     type="button"
                                     onClick={() => setDeleteTarget(entry)}
-                                    className="p-1 text-gray-500 hover:text-red-600 dark:hover:text-red-400 rounded"
+                                    className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
                                     title="Delete file"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -823,30 +925,82 @@ export function TaskGitHubManagerModal({
           )}
         </div>
 
+        {/* Modal: Create New File In-App */}
+        {showNewFileModal && (
+          <div className="absolute inset-0 z-40 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 max-w-md w-full shadow-2xl">
+              <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <Plus className="w-4 h-4 text-blue-500" />
+                <span>Create New File</span>
+              </h4>
+              <form onSubmit={handleCreateNewFile} className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                    Filename (e.g. index.js, notes.md)
+                  </label>
+                  <input
+                    type="text"
+                    value={newFileName}
+                    onChange={(e) => setNewFileName(e.target.value)}
+                    placeholder="filename.ext"
+                    className="w-full px-3 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                    Initial Content (Optional)
+                  </label>
+                  <textarea
+                    value={newFileContent}
+                    onChange={(e) => setNewFileContent(e.target.value)}
+                    rows={4}
+                    className="w-full p-2.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="// write code or notes..."
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewFileModal(false)}
+                    className="flex-1 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creatingFile || !newFileName.trim()}
+                    className="flex-1 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {creatingFile ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Create & Commit'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Delete Confirmation Dialog */}
         {deleteTarget && (
-          <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
-              <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/50 text-red-600 flex items-center justify-center mx-auto mb-3">
-                <Trash2 className="w-6 h-6" />
+          <div className="absolute inset-0 z-40 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 max-w-sm w-full shadow-2xl text-center">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 text-red-600 flex items-center justify-center mx-auto mb-2.5">
+                <Trash2 className="w-5 h-5" />
               </div>
-              <h4 className="text-base font-semibold mb-1">Delete File?</h4>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              <h4 className="text-sm font-semibold mb-1">Delete File?</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
                 Are you sure you want to delete{' '}
-                <span className="font-mono font-medium text-gray-800 dark:text-gray-200">
-                  {deleteTarget.path}
+                <span className="font-mono font-medium text-slate-900 dark:text-white">
+                  {deleteTarget.name}
                 </span>
                 ?
-              </p>
-              <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-6 italic">
-                This action commits a deletion to GitHub recorded under your name.
               </p>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setDeleteTarget(null)}
                   disabled={deleting}
-                  className="flex-1 py-2 px-3 text-xs font-medium rounded-xl border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  className="flex-1 py-1.5 text-xs font-medium rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   Cancel
                 </button>
@@ -854,9 +1008,9 @@ export function TaskGitHubManagerModal({
                   type="button"
                   onClick={handleDeleteConfirm}
                   disabled={deleting}
-                  className="flex-1 py-2 px-3 text-xs font-medium rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  className="flex-1 py-1.5 text-xs font-medium rounded-xl bg-red-600 hover:bg-red-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
-                  {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Delete'}
+                  {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Delete'}
                 </button>
               </div>
             </div>
