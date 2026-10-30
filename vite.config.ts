@@ -12,6 +12,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     allowedHosts: true, // Allow all tunnel domains (ngrok, localhost.run, pinggy, etc.)
+    watch: {
+      usePolling: true,
+      interval: 1000,
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
