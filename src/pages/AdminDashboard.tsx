@@ -316,8 +316,9 @@ export function AdminDashboard() {
 
   // Realtime attendance updates
   useEffect(() => {
-    let baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-    baseUrl = baseUrl.replace(/\/api\/?$/, '');
+    let baseUrl = import.meta.env.VITE_API_URL
+      ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+      : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001');
 
     const socket: Socket = io(baseUrl, {
       path: '/socket.io',

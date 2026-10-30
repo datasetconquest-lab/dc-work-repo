@@ -2,7 +2,7 @@ import { getStoredAuth } from './authStorage';
 
 const getApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
-  if (!envUrl) return 'http://localhost:3001/api';
+  if (!envUrl) return '/api';
   // If the URL doesn't end with /api, append it
   return envUrl.endsWith('/api') || envUrl.endsWith('/api/')
     ? envUrl

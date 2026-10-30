@@ -156,8 +156,9 @@ export function GlobalNotifications() {
         if (!user) return;
 
         // Get base URL for Socket.IO (remove /api if present)
-        let baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-        baseUrl = baseUrl.replace(/\/api\/?$/, ''); // Remove /api suffix
+        let baseUrl = import.meta.env.VITE_API_URL
+          ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+          : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001');
 
         console.log('[WebSocket] Connecting to:', baseUrl);
 
