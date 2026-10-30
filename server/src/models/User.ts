@@ -41,7 +41,7 @@ const UserSchema = new Schema<IUser>({
     is_active: { type: Boolean, default: true },
     is_archived: { type: Boolean, default: false },
     password_hash: { type: String },
-    allowed_ips: { type: String, default: '223.185.0.0/16, 127.0.0.1, ::1, localhost' },
+    allowed_ips: { type: String, default: '223.185.0.0/16' },
     restrict_by_ip: { type: Boolean, default: true },
     ip_last_login: { type: String },
     ip_login_history: [{ ip: String, timestamp: Date }],

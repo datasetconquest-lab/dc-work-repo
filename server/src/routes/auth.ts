@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import rateLimit from 'express-rate-limit';
-import { authenticateUser, findUserById, comparePassword, hashPassword, validatePassword } from '../auth.js';
+import { authenticateUser, findUserById, comparePassword, hashPassword, validatePassword, getEffectiveClientIp } from '../auth.js';
 import { authMiddleware } from '../middleware.js';
 import type { AuthRequest } from '../middleware.js';
 import { User } from '../models/User.js';
@@ -36,11 +36,12 @@ router.post('/login', loginLimiter, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Get client IP address
-    const clientIP = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
+    // Get client IP address and resolve to public IP if connecting from loopback/LAN
+    const rawClientIP = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
       req.socket.remoteAddress?.replace(/^::ffff:/, '') ||
       req.ip ||
       'unknown';
+    const clientIP = await getEffectiveClientIp(rawClientIP);
 
     try {
       const { user, token } = await authenticateUser(email, password, clientIP);
