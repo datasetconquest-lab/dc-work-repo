@@ -1,6 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Lock, Mail, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Lock, Mail, Loader2, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -11,17 +11,25 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [detectedIp, setDetectedIp] = useState<string | null>(null);
   const { signIn } = useAuth();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setDetectedIp(null);
     setLoading(true);
 
     const { error } = await signIn(email, password, rememberMe);
 
     if (error) {
       setError(error.message);
+      let ip = (error as any).detectedIp || null;
+      if (!ip) {
+        const match = error.message.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+        if (match) ip = match[0];
+      }
+      setDetectedIp(ip);
       setLoading(false);
     }
   };
@@ -50,8 +58,35 @@ export function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg text-sm animate-shake">
-                {error}
+              <div className="bg-red-50 dark:bg-red-950/40 border-2 border-red-500/80 dark:border-red-600 p-4 rounded-xl text-sm animate-shake shadow-lg">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-red-100 dark:bg-red-900/50 rounded-lg shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+                  </div>
+                  <div className="space-y-2 flex-1">
+                    <p className="font-bold text-red-900 dark:text-red-100 text-sm">
+                      Access Denied: Unauthorized Network
+                    </p>
+                    <p className="text-red-800 dark:text-red-300 text-xs leading-relaxed">
+                      {error}
+                    </p>
+                    {detectedIp && (
+                      <div className="mt-2.5 p-3 bg-red-100/90 dark:bg-red-900/60 rounded-lg border border-red-300 dark:border-red-700">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-red-900 dark:text-red-200">
+                            Your Connected IP:
+                          </span>
+                          <span className="font-mono font-extrabold text-sm text-red-800 dark:text-red-100 bg-white dark:bg-gray-900 px-2.5 py-1 rounded border border-red-300 dark:border-red-700 shadow-sm">
+                            {detectedIp}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-red-700 dark:text-red-300 mt-2">
+                          Your current IP does not start with <b>223.185.</b> and has not been authorized. Contact your system administrator to allocate this IP for WFH access.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type AttendanceStatus = 'present' | 'partial' | 'absent' | 'late';
+export type AttendanceStatus = 'present' | 'partial' | 'absent' | 'late' | 'leave';
 
 export interface IAttendance extends Document {
   _id: mongoose.Types.ObjectId;
@@ -39,7 +39,7 @@ const AttendanceSchema = new Schema<IAttendance>({
   day: { type: String, required: true, trim: true },
   in_time: { type: Date, default: null },
   out_time: { type: Date, default: null },
-  status: { type: String, enum: ['present', 'partial', 'absent', 'late'], default: 'absent', index: true },
+  status: { type: String, enum: ['present', 'partial', 'absent', 'late', 'leave'], default: 'absent', index: true },
 }, {
   timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
   collection: 'attendance'
@@ -49,4 +49,3 @@ AttendanceSchema.index({ user_id: 1, date: 1 }, { unique: true });
 AttendanceSchema.index({ date: 1, status: 1 });
 
 export const Attendance = mongoose.model<IAttendance>('Attendance', AttendanceSchema);
-

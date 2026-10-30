@@ -280,11 +280,13 @@ async function initializeRoutes() {
     const notificationsModule = await import('./routes/notifications.js');
     const dataModule = await import('./routes/data.js');
     const todosModule = await import('./routes/todos.js');
+    const leavesModule = await import('./routes/leave.js');
     const githubModule = await import('./routes/github.js');
 
     app.use('/api/auth', authModule.default);
     app.use('/api/profiles', profileModule.default);
     app.use('/api/attendance', attendanceModule.default);
+    app.use('/api/leaves', leavesModule.default);
     app.use('/api/admin', ipManagementModule.default);
     app.use('/api/query', queryModule.default);
     app.use('/api/messages', dmModule.default);

@@ -54,7 +54,10 @@ async function apiCall(endpoint: string, options: FetchOptions = {}) {
 
   if (!response.ok) {
     const message = parsed?.error || parsed?.message || `API error: ${response.statusText}`;
-    throw new Error(message);
+    const err: any = new Error(message);
+    err.code = parsed?.code;
+    err.detectedIp = parsed?.detectedIp;
+    throw err;
   }
 
   return parsed;
@@ -233,6 +236,12 @@ export const dataAPI = {
   updateUserProfile: (userId: string, payload: any) =>
     apiCall(`/profiles/${userId}`, { method: 'PUT', body: payload }),
 
+  deleteUser: (userId: string) =>
+    apiCall(`/profiles/${userId}`, { method: 'DELETE' }),
+
+  restoreUser: (userId: string) =>
+    apiCall(`/profiles/${userId}/restore`, { method: 'POST' }),
+
   updateUserLastLogin: (userId: string) =>
     queryAPI.update('profiles', { ip_last_login: new Date().toISOString() }, { id: userId }),
 
@@ -240,6 +249,15 @@ export const dataAPI = {
 
   getAttendanceToday: () =>
     apiCall('/attendance/today'),
+
+  getAttendanceAnalytics: (params?: { month?: string; year?: number | string; user_id?: string | null }) => {
+    const qp = new URLSearchParams();
+    if (params?.month) qp.append('month', params.month);
+    if (params?.year) qp.append('year', String(params.year));
+    if (params?.user_id) qp.append('user_id', params.user_id);
+    const qs = qp.toString();
+    return apiCall(`/attendance/analytics${qs ? `?${qs}` : ''}`);
+  },
 
   markAttendance: (payload: { employee_id: string; password: string }) =>
     apiCall('/attendance/mark', { method: 'POST', body: payload }),
@@ -253,6 +271,63 @@ export const dataAPI = {
     const qp = month ? `?month=${encodeURIComponent(month)}` : '';
     return apiCall(`/attendance/admin/monthly-working-days${qp}`);
   },
+
+  adminSaveAttendanceRecord: (payload: {
+    user_id: string;
+    date: string;
+    in_time?: string | null;
+    out_time?: string | null;
+    status?: string;
+    late_permission?: boolean;
+  }) => apiCall('/attendance/admin/record', { method: 'POST', body: payload }),
+
+  adminDeleteAttendanceRecord: (params: { user_id?: string; date?: string; id?: string }) => {
+    const qp = new URLSearchParams();
+    if (params.id) qp.append('id', params.id);
+    if (params.user_id) qp.append('user_id', params.user_id);
+    if (params.date) qp.append('date', params.date);
+    return apiCall(`/attendance/admin/record?${qp.toString()}`, { method: 'DELETE' });
+  },
+
+  // === LEAVE MANAGEMENT ===
+
+  getLeaves: (params?: { user_id?: string; month?: string; status?: string }) => {
+    const qp = new URLSearchParams();
+    if (params?.user_id) qp.append('user_id', params.user_id);
+    if (params?.month) qp.append('month', params.month);
+    if (params?.status) qp.append('status', params.status);
+    const qs = qp.toString();
+    return apiCall(`/leaves${qs ? `?${qs}` : ''}`);
+  },
+
+  createLeave: (data: {
+    user_id?: string;
+    start_date: string;
+    end_date?: string;
+    type?: string;
+    reason?: string;
+    status?: string;
+  }) => apiCall('/leaves', { method: 'POST', body: data }),
+
+  updateLeave: (id: string, data: any) =>
+    apiCall(`/leaves/${id}`, { method: 'PUT', body: data }),
+
+  deleteLeave: (id: string) =>
+    apiCall(`/leaves/${id}`, { method: 'DELETE' }),
+
+  // === SERVER & WFH IP MANAGEMENT ===
+
+  getServerIps: () =>
+    apiCall('/admin/server-ips'),
+
+  allocateServerIp: (ip: string, label?: string) =>
+    apiCall('/admin/server-ips', { method: 'POST', body: { ip, label } }),
+
+  deleteServerIp: (id: string) =>
+    apiCall(`/admin/server-ips/${id}`, { method: 'DELETE' }),
+
+  enableUserWfhIps: (userId: string, additional_ips: string[]) =>
+    apiCall(`/admin/users/${userId}/enable-wfh`, { method: 'POST', body: { additional_ips } }),
 
   // === TO-DO LIST ===
 

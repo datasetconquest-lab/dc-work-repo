@@ -61,9 +61,11 @@ router.post('/login', loginLimiter, async (req: AuthRequest, res: Response) => {
       res.json(responseData);
     } catch (authError: any) {
       // Specific authentication errors
+      const isIpBlocked = authError.code === 'IP_BLOCKED' || authError.message?.includes('IP');
       return res.status(401).json({
         error: authError.message || 'Authentication failed',
-        code: 'AUTH_FAILED'
+        code: authError.code || (isIpBlocked ? 'IP_BLOCKED' : 'AUTH_FAILED'),
+        detectedIp: authError.detectedIp || clientIP
       });
     }
   } catch (error: any) {

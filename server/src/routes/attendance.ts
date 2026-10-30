@@ -32,6 +32,260 @@ const MONTHLY_EXPORT_RECIPIENTS = (
 ).split(',').map(s => s.trim()).filter(Boolean);
 const MONTHLY_EXPORT_TEST_RECIPIENT = process.env.ATTENDANCE_EXPORT_TEST_RECIPIENT || 'msc.manvith1234@gmail.com';
 
+// User attendance & work analytics: daily hours per month, and monthly days/hours per year
+router.get('/analytics', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const targetUserId = req.query.user_id && req.user.role === 'admin'
+      ? String(req.query.user_id)
+      : req.user.id;
+
+    const userObjectId = toObjectId(targetUserId);
+    if (!userObjectId) return res.status(400).json({ error: 'Invalid user ID' });
+
+    const user = await User.findById(userObjectId)
+      .select('employee_id full_name email role created_at late_permission_dates')
+      .lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const now = new Date();
+    const todayKey = getLocalDateKey(now);
+
+    // Target month: YYYY-MM
+    const targetMonth = typeof req.query.month === 'string' && /^\d{4}-\d{2}$/.test(req.query.month)
+      ? req.query.month
+      : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    // Target year: YYYY
+    const targetYear = typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year)
+      ? parseInt(req.query.year, 10)
+      : now.getFullYear();
+
+    const [yearStr, monthStr] = targetMonth.split('-');
+    const monthYear = parseInt(yearStr, 10);
+    const monthNum = parseInt(monthStr, 10);
+    const daysInMonth = new Date(monthYear, monthNum, 0).getDate();
+
+    const startMonthKey = `${targetMonth}-01`;
+    const endMonthKey = `${targetMonth}-${String(daysInMonth).padStart(2, '0')}`;
+
+    // Fetch month records for this user
+    const monthRecords = await Attendance.find({
+      user_id: userObjectId,
+      date: { $gte: startMonthKey, $lte: endMonthKey }
+    }).lean();
+
+    const monthRecordsMap = new Map<string, any>(monthRecords.map(r => [r.date, r]));
+
+    // Build day-by-day stats
+    const dailyStats: Array<{
+      date: string;
+      dayNumber: number;
+      dayOfWeek: string;
+      hours: number;
+      in_time: string | null;
+      out_time: string | null;
+      status: string;
+      is_worked: boolean;
+      is_weekend: boolean;
+      is_today: boolean;
+      is_future: boolean;
+    }> = [];
+
+    let totalHoursMonth = 0;
+    let workedDaysMonth = 0;
+    let presentDaysMonth = 0;
+    let lateDaysMonth = 0;
+    let partialDaysMonth = 0;
+    let leaveDaysMonth = 0;
+    let absentDaysMonth = 0;
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateKey = `${targetMonth}-${String(d).padStart(2, '0')}`;
+      const dayOfWeek = getDayOfWeek(dateKey);
+      const isWeekend = dayOfWeek === 'Sunday';
+      const isToday = dateKey === todayKey;
+      const isFuture = dateKey > todayKey;
+
+      const record = monthRecordsMap.get(dateKey);
+
+      let hours = 0;
+      let inTimeIso: string | null = null;
+      let outTimeIso: string | null = null;
+
+      if (record?.in_time) {
+        inTimeIso = new Date(record.in_time).toISOString();
+        if (record.out_time) {
+          outTimeIso = new Date(record.out_time).toISOString();
+          const diffMs = new Date(record.out_time).getTime() - new Date(record.in_time).getTime();
+          hours = Math.max(0, Math.round((diffMs / 3600000) * 10) / 10);
+        } else if (isToday) {
+          const diffMs = Date.now() - new Date(record.in_time).getTime();
+          hours = Math.max(0, Math.round((diffMs / 3600000) * 10) / 10);
+        }
+      }
+
+      const status = record?.status || (isWeekend ? 'weekend' : isFuture ? 'future' : 'absent');
+      const isWorked = ['present', 'late', 'partial'].includes(status) || hours > 0;
+
+      if (isWorked) {
+        workedDaysMonth += 1;
+        totalHoursMonth += hours;
+        if (status === 'present') presentDaysMonth += 1;
+        else if (status === 'late') lateDaysMonth += 1;
+        else if (status === 'partial') partialDaysMonth += 1;
+      } else if (status === 'leave') {
+        leaveDaysMonth += 1;
+      } else if (status === 'absent' && !isWeekend && !isFuture) {
+        absentDaysMonth += 1;
+      }
+
+      dailyStats.push({
+        date: dateKey,
+        dayNumber: d,
+        dayOfWeek,
+        hours,
+        in_time: inTimeIso,
+        out_time: outTimeIso,
+        status,
+        is_worked: isWorked,
+        is_weekend: isWeekend,
+        is_today: isToday,
+        is_future: isFuture,
+      });
+    }
+
+    totalHoursMonth = Math.round(totalHoursMonth * 10) / 10;
+    const avgDailyHours = workedDaysMonth > 0
+      ? Math.round((totalHoursMonth / workedDaysMonth) * 10) / 10
+      : 0;
+
+    // Monthly days & hours for the selected year (12 months)
+    const yearStartKey = `${targetYear}-01-01`;
+    const yearEndKey = `${targetYear}-12-31`;
+
+    const yearRecords = await Attendance.find({
+      user_id: userObjectId,
+      date: { $gte: yearStartKey, $lte: yearEndKey }
+    }).lean();
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthlyStats: Array<{
+      month: string;
+      monthName: string;
+      monthNumber: number;
+      daysWorked: number;
+      totalHours: number;
+      presentDays: number;
+      lateDays: number;
+      leaveDays: number;
+      absentDays: number;
+      isCurrentMonth: boolean;
+      isFutureMonth: boolean;
+    }> = [];
+
+    let totalDaysWorkedYear = 0;
+    let totalHoursYear = 0;
+
+    for (let m = 1; m <= 12; m++) {
+      const mPrefix = `${targetYear}-${String(m).padStart(2, '0')}`;
+      const isCurrentMonth = mPrefix === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const isFutureMonth = mPrefix > `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const recsInMonth = yearRecords.filter(r => r.date.startsWith(mPrefix));
+
+      let mDaysWorked = 0;
+      let mTotalHours = 0;
+      let mPresent = 0;
+      let mLate = 0;
+      let mLeave = 0;
+      let mAbsent = 0;
+
+      for (const r of recsInMonth) {
+        let rHours = 0;
+        if (r.in_time && r.out_time) {
+          const diffMs = new Date(r.out_time).getTime() - new Date(r.in_time).getTime();
+          rHours = Math.max(0, Math.round((diffMs / 3600000) * 10) / 10);
+        } else if (r.in_time && r.date === todayKey) {
+          const diffMs = Date.now() - new Date(r.in_time).getTime();
+          rHours = Math.max(0, Math.round((diffMs / 3600000) * 10) / 10);
+        }
+
+        const worked = ['present', 'late', 'partial'].includes(r.status) || rHours > 0;
+        if (worked) {
+          mDaysWorked += 1;
+          mTotalHours += rHours;
+          if (r.status === 'present') mPresent += 1;
+          else if (r.status === 'late') mLate += 1;
+        } else if (r.status === 'leave') {
+          mLeave += 1;
+        } else if (r.status === 'absent') {
+          mAbsent += 1;
+        }
+      }
+
+      mTotalHours = Math.round(mTotalHours * 10) / 10;
+      totalDaysWorkedYear += mDaysWorked;
+      totalHoursYear += mTotalHours;
+
+      monthlyStats.push({
+        month: mPrefix,
+        monthName: monthNames[m - 1],
+        monthNumber: m,
+        daysWorked: mDaysWorked,
+        totalHours: mTotalHours,
+        presentDays: mPresent,
+        lateDays: mLate,
+        leaveDays: mLeave,
+        absentDays: mAbsent,
+        isCurrentMonth,
+        isFutureMonth,
+      });
+    }
+
+    totalHoursYear = Math.round(totalHoursYear * 10) / 10;
+    const elapsedMonths = targetYear < now.getFullYear() ? 12 : now.getMonth() + 1;
+    const avgDaysPerMonth = elapsedMonths > 0
+      ? Math.round((totalDaysWorkedYear / elapsedMonths) * 10) / 10
+      : 0;
+
+    res.json({
+      user: {
+        id: user._id.toString(),
+        full_name: (user as any).full_name || '',
+        employee_id: (user as any).employee_id || '',
+        email: user.email
+      },
+      daily_chart: {
+        month: targetMonth,
+        year: monthYear,
+        month_number: monthNum,
+        days_in_month: daysInMonth,
+        total_hours: totalHoursMonth,
+        total_days_worked: workedDaysMonth,
+        avg_hours_per_day: avgDailyHours,
+        present_days: presentDaysMonth,
+        late_days: lateDaysMonth,
+        partial_days: partialDaysMonth,
+        leave_days: leaveDaysMonth,
+        absent_days: absentDaysMonth,
+        days: dailyStats
+      },
+      monthly_chart: {
+        year: targetYear,
+        total_days_worked: totalDaysWorkedYear,
+        total_hours: totalHoursYear,
+        avg_days_per_month: avgDaysPerMonth,
+        months: monthlyStats
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching attendance analytics:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch analytics' });
+  }
+});
+
 router.get('/today', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
@@ -254,6 +508,10 @@ router.get('/admin/today', authMiddleware, adminMiddleware, async (req: AuthRequ
       const in_time = r?.in_time || null;
       const out_time = r?.out_time || null;
       const lateAllowed = isLateAllowed(u as any, date);
+      let status: any = r?.status;
+      if (!status || status === 'absent') {
+        status = deriveStatus(in_time, out_time, { lateAllowed, dateKey: date });
+      }
       return {
         user_id: u._id.toString(),
         employee_id: (u as any).employee_id || r?.employee_id || null,
@@ -262,7 +520,7 @@ router.get('/admin/today', authMiddleware, adminMiddleware, async (req: AuthRequ
         day: r?.day || getDayOfWeek(date),
         in_time,
         out_time,
-        status: shouldFinalize ? (r?.status || deriveStatus(in_time, out_time, { lateAllowed, dateKey: date })) : deriveStatus(in_time, out_time, { lateAllowed, dateKey: date }),
+        status,
         late_permission: lateAllowed,
       };
     });
@@ -271,6 +529,145 @@ router.get('/admin/today', authMiddleware, adminMiddleware, async (req: AuthRequ
   } catch (error: any) {
     console.error('Error fetching admin attendance:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch attendance' });
+  }
+});
+
+// Admin-only: Create or update attendance record (time CRUD)
+router.post('/admin/record', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { user_id, date, in_time, out_time, status, late_permission } = req.body;
+    if (!user_id || !date || !isValidDateKey(date)) {
+      return res.status(400).json({ error: 'user_id and valid date (YYYY-MM-DD) are required' });
+    }
+
+    const userObjectId = toObjectId(user_id);
+    if (!userObjectId) return res.status(400).json({ error: 'Invalid user ID' });
+
+    const user = await User.findById(userObjectId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Handle late_permission update on user if requested
+    if (typeof late_permission === 'boolean') {
+      const dates = Array.isArray(user.late_permission_dates) ? [...user.late_permission_dates] : [];
+      if (late_permission && !dates.includes(date)) {
+        dates.push(date);
+        dates.sort();
+        user.late_permission_dates = dates;
+        await user.save();
+      } else if (!late_permission && dates.includes(date)) {
+        user.late_permission_dates = dates.filter((d: string) => d !== date);
+        await user.save();
+      }
+    }
+
+    const lateAllowed = isLateAllowed(user as any, date);
+
+    let parsedIn: Date | null = null;
+    let parsedOut: Date | null = null;
+
+    if (in_time) {
+      parsedIn = new Date(in_time);
+      if (isNaN(parsedIn.getTime())) {
+        parsedIn = new Date(`${date}T${in_time}:00`);
+      }
+      if (isNaN(parsedIn.getTime())) parsedIn = null;
+    }
+
+    if (out_time) {
+      parsedOut = new Date(out_time);
+      if (isNaN(parsedOut.getTime())) {
+        parsedOut = new Date(`${date}T${out_time}:00`);
+      }
+      if (isNaN(parsedOut.getTime())) parsedOut = null;
+    }
+
+    let resolvedStatus = status;
+    if (!resolvedStatus || !['present', 'partial', 'absent', 'late', 'leave'].includes(resolvedStatus)) {
+      resolvedStatus = deriveStatus(parsedIn, parsedOut, { lateAllowed, dateKey: date });
+    }
+
+    const existing = await Attendance.findOne({ user_id: userObjectId, date });
+    const record = existing || new Attendance({
+      user_id: userObjectId,
+      date,
+      day: getDayOfWeek(date),
+    });
+
+    record.employee_id = (user as any).employee_id || 'N/A';
+    record.employee_name = (user as any).full_name || (user as any).email || 'Employee';
+    record.in_time = parsedIn;
+    record.out_time = parsedOut;
+    record.status = resolvedStatus;
+    record.updated_at = new Date();
+    await record.save();
+
+    // Broadcast attendance update via Socket.IO
+    try {
+      const { io } = await import('../server.js');
+      const admins = await User.find({ role: 'admin', is_active: true }).select('_id').lean();
+      const payload = {
+        date,
+        user_id: userObjectId.toString(),
+        employee_id: record.employee_id,
+        employee_name: record.employee_name,
+        in_time: record.in_time,
+        out_time: record.out_time,
+        status: record.status,
+        source: 'admin_edit'
+      };
+      for (const a of admins) {
+        io.to(`user:${a._id.toString()}`).emit('attendance_update', payload);
+      }
+    } catch (e) {
+      console.error('Failed to emit attendance_update:', e);
+    }
+
+    res.json({
+      success: true,
+      record: {
+        id: record._id.toString(),
+        user_id: record.user_id.toString(),
+        employee_id: record.employee_id,
+        employee_name: record.employee_name,
+        date: record.date,
+        day: record.day,
+        in_time: record.in_time,
+        out_time: record.out_time,
+        status: record.status,
+      }
+    });
+  } catch (error: any) {
+    console.error('Error saving admin attendance record:', error);
+    res.status(500).json({ error: error.message || 'Failed to save attendance record' });
+  }
+});
+
+// Admin-only: Delete / reset an attendance record
+router.delete('/admin/record', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { user_id, date, id } = req.query;
+    const filter: any = {};
+    if (id) {
+      filter._id = toObjectId(String(id));
+    } else if (user_id && date) {
+      filter.user_id = toObjectId(String(user_id));
+      filter.date = String(date);
+    } else {
+      return res.status(400).json({ error: 'id or (user_id and date) required' });
+    }
+
+    await Attendance.deleteOne(filter);
+
+    // Broadcast update
+    try {
+      const { io } = await import('../server.js');
+      io.emit('attendance_auto_update', { date: String(date || '') });
+    } catch {}
+
+    res.json({ success: true, message: 'Attendance record deleted/reset' });
+  } catch (error: any) {
+    console.error('Error deleting attendance record:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete attendance record' });
   }
 });
 
@@ -365,7 +762,13 @@ router.get('/admin/monthly-working-days', authMiddleware, adminMiddleware, async
         if (startKey && dateKey < startKey) continue; // before the user joined
         const record = recordsByDate.get(dateKey);
         const lateAllowed = isLateAllowed(u as any, dateKey);
-        const status = deriveStatus(record?.in_time || null, record?.out_time || null, { lateAllowed, dateKey });
+        if (record?.status === 'leave') {
+          leave_dates.push(dateKey);
+          continue;
+        }
+        const status = record?.status && ['present', 'partial', 'late'].includes(record.status)
+          ? record.status
+          : deriveStatus(record?.in_time || null, record?.out_time || null, { lateAllowed, dateKey });
         if (status === 'present') present_days += 1;
         else if (status === 'late') {
           late_days += 1;
@@ -373,6 +776,8 @@ router.get('/admin/monthly-working-days', authMiddleware, adminMiddleware, async
         } else if (status === 'partial') {
           partial_days += 1;
           partial_dates.push(dateKey);
+        } else if (status === 'leave') {
+          leave_dates.push(dateKey);
         } else if (dateKey !== todayKey) {
           absent_records += 1;
           leave_dates.push(dateKey);

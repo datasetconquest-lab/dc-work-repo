@@ -124,16 +124,63 @@ function ipv4InCidr(ip: string, cidr: string): boolean {
   return (ipNum & mask) === (netNum & mask);
 }
 
-// Org-wide always-allowed IPs / CIDRs, applied to EVERY user in addition to
-// their own allowed_ips. Use this for a shared public range whose exact address
-// changes daily but stays within a block, e.g. GLOBAL_ALLOWED_IPS=103.218.112.0/24
-const GLOBAL_ALLOWED_IPS: string[] = (process.env.GLOBAL_ALLOWED_IPS || '')
+const REQUIRED_IP_PREFIX = process.env.REQUIRED_IP_PREFIX || '223.185.';
+
+// Org-wide always-allowed IPs / CIDRs
+const GLOBAL_ALLOWED_IPS: string[] = (process.env.GLOBAL_ALLOWED_IPS || '223.185.0.0/16,127.0.0.1,::1,localhost')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
+let dynamicServerIps: string[] = [];
+let lastDynamicIpFetch = 0;
+
+export async function getDynamicServerIps(): Promise<string[]> {
+  const now = Date.now();
+  if (now - lastDynamicIpFetch < 15_000 && dynamicServerIps.length > 0) {
+    return dynamicServerIps;
+  }
+  try {
+    const { ServerIpConfig } = await import('./models/ServerIpConfig.js');
+    const records = await ServerIpConfig.find({}).lean();
+    dynamicServerIps = records.map((r: any) => String(r.ip).trim()).filter(Boolean);
+    lastDynamicIpFetch = now;
+  } catch (err) {
+    // Fallback if collection not ready
+  }
+  return dynamicServerIps;
+}
+
+export function refreshDynamicServerIps(ips: string[]) {
+  dynamicServerIps = ips;
+  lastDynamicIpFetch = Date.now();
+}
+
 export function isGloballyAllowedIp(clientIpRaw: string): boolean {
-  return GLOBAL_ALLOWED_IPS.some((range) => isIpAllowed(clientIpRaw, range));
+  const clientIp = normalizeClientIp(clientIpRaw);
+  if (!clientIp || clientIp === 'unknown') return false;
+
+  // Local development / loopback always permitted
+  if (clientIp === '127.0.0.1' || clientIp === '::1' || clientIp.toLowerCase() === 'localhost') {
+    return true;
+  }
+
+  // Strict primary check: only IPs starting with 223.185.
+  if (clientIp.startsWith(REQUIRED_IP_PREFIX)) {
+    return true;
+  }
+
+  // Check env allowed IPs
+  if (GLOBAL_ALLOWED_IPS.some((range) => isIpAllowed(clientIpRaw, range))) {
+    return true;
+  }
+
+  // Check dynamic server-allocated IPs
+  if (dynamicServerIps.some((range) => isIpAllowed(clientIpRaw, range))) {
+    return true;
+  }
+
+  return false;
 }
 
 // ---- Desktop (exe) office-network enforcement -----------------------------
@@ -191,12 +238,15 @@ export function isIpAllowed(clientIpRaw: string, allowed: string): boolean {
   const allowedTrim = allowed.trim();
   if (!allowedTrim) return false;
 
+  // Airtel network dynamic IP: 223.185.x.x
+  if (clientIp.startsWith('223.185.')) return true;
+
   // Handle localhost
   if (allowedTrim.toLowerCase() === 'localhost') return clientIp === '127.0.0.1' || clientIp === '::1';
 
-  // Support wildcard syntax (e.g. 103.218.112.*)
+  // Support wildcard syntax (e.g. 103.218.112.*, 223.185.*, 223.185.*.*)
   if (allowedTrim.includes('*')) {
-    const pattern = allowedTrim.replace(/\*/g, '').trim();
+    const pattern = allowedTrim.replace(/(\.\*)+$/, '').replace(/\*/g, '').trim();
     return clientIp.startsWith(pattern);
   }
 
@@ -237,7 +287,7 @@ export async function createUser(
     role: 'member',
     is_active: true,
     password_hash: hashedPassword,
-    allowed_ips: '127.0.0.1, ::1, localhost, 192.168.0.0/16',
+    allowed_ips: '223.185.0.0/16, 127.0.0.1, ::1, localhost',
     restrict_by_ip: true
   });
 
@@ -316,6 +366,8 @@ export async function authenticateUser(email: string, password: string, clientIP
 
     const allowedIPs = user.allowed_ips ? user.allowed_ips.split(',').map((ip: string) => ip.trim()).filter((ip: string) => ip.length > 0) : [];
 
+    await getDynamicServerIps();
+
     // The org-wide global range always grants access, even if a user has no
     // personal allow-list configured.
     const globallyAllowed = isGloballyAllowedIp(clientIP);
@@ -328,7 +380,10 @@ export async function authenticateUser(email: string, password: string, clientIP
         ip_address: clientIP,
         user_agent: 'No allowed IPs configured'
       }).catch(() => { });
-      throw new Error('No allowed IP addresses configured. Contact administrator for access.');
+      const err: any = new Error(`Access Denied: Your IP (${clientIP}) is not authorized. Access is strictly restricted to the office network (must start with ${REQUIRED_IP_PREFIX}).`);
+      err.code = 'IP_BLOCKED';
+      err.detectedIp = clientIP;
+      throw err;
     }
 
     const ipAllowed = globallyAllowed || allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP));
@@ -339,9 +394,12 @@ export async function authenticateUser(email: string, password: string, clientIP
         login_time: new Date(),
         success: false,
         ip_address: clientIP,
-        user_agent: `IP blocked: not in whitelist. Allowed IPs: ${allowedIPs.join(', ')}`
+        user_agent: `IP blocked: ${clientIP} does not start with ${REQUIRED_IP_PREFIX}`
       }).catch(() => { });
-      throw new Error(`Login not allowed from IP: ${clientIP}. This site is accessible only from office network. Contact administrator to enable WFH access.`);
+      const err: any = new Error(`Access Denied: Your IP (${clientIP}) is not authorized. Access is strictly restricted to the office network (IP must start with ${REQUIRED_IP_PREFIX}) or an administrator-allocated WFH IP.`);
+      err.code = 'IP_BLOCKED';
+      err.detectedIp = clientIP;
+      throw err;
     }
   }
 

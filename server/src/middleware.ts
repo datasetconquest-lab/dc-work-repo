@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, isIpAllowed, isGloballyAllowedIp, findUserById, checkDesktopOfficeAccess } from './auth.js';
+import { verifyToken, isIpAllowed, isGloballyAllowedIp, getDynamicServerIps, findUserById, checkDesktopOfficeAccess } from './auth.js';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -68,14 +68,15 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
         }
       }
 
-      if (allowedIPs.length > 0 && !isExempted) {
+      if (!isExempted) {
+        await getDynamicServerIps();
         const ipAllowed = isGloballyAllowedIp(clientIP)
-          || allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP));
+          || (allowedIPs.length > 0 && allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP)));
 
         if (!ipAllowed) {
-          console.warn(`[SECURITY] Blocked request from ${clientIP} for user ${user.email} on ${req.method} ${req.originalUrl}. Allowed: ${user.allowed_ips}`);
+          console.warn(`[SECURITY] Blocked request from ${clientIP} for user ${user.email} on ${req.method} ${req.originalUrl}. Strict requirement: 223.185.`);
           return res.status(403).json({
-            error: `Access Denied: Your IP (${clientIP}) is not authorized. This site is restricted to the office network.`,
+            error: `Access Denied: Your IP (${clientIP}) is not authorized. Access is strictly restricted to the office network (IP must start with 223.185.).`,
             code: 'IP_BLOCKED',
             detectedIp: clientIP
           });

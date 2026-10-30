@@ -8,5 +8,7 @@ export * from './Common.js';
 export * from './Additional.js';
 export * from './Attendance.js';
 export * from './MonthlyAttendanceExport.js';
+export * from './Leave.js';
+export * from './ServerIpConfig.js';
 export * from './EdaChat.js';
 export * from './EdaResult.js';
