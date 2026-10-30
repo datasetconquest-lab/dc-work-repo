@@ -186,13 +186,13 @@ export function Login() {
 
       {/* Top Header */}
       <header className="relative z-20 w-full px-6 py-5 max-w-7xl mx-auto flex items-center justify-between">
-        {/* Brand Plaque */}
+        {/* Brand Logo (Transparent without background) */}
         <div className="flex items-center gap-3">
-          <div className="h-10 px-3 py-1 bg-white dark:bg-white/95 rounded-xl border border-slate-200 dark:border-white/20 flex items-center">
+          <div className="h-10 flex items-center">
             <img
-              src="/dc_solution_logo.jpg"
-              alt="Data Conquest Solution"
-              className="h-7 w-auto object-contain"
+              src="/dc_logo_transparent.png"
+              alt="Data Conquest"
+              className="h-8 md:h-9 w-auto object-contain"
             />
           </div>
         </div>
@@ -226,12 +226,12 @@ export function Login() {
               <span>Next-Gen Research & Operations Hub</span>
             </div>
 
-            {/* Official Logo Hero Plaque */}
-            <div className="inline-block p-4 sm:p-5 bg-white dark:bg-white/95 rounded-2xl border border-slate-200 dark:border-white/30">
+            {/* Official Transparent Logo Hero Display */}
+            <div className="inline-block py-1">
               <img
-                src="/dc_solution_logo.jpg"
-                alt="Data Conquest Solution — Data • Ideas • Impact"
-                className="max-h-20 sm:max-h-24 w-auto object-contain mx-auto"
+                src="/dc_logo_transparent.png"
+                alt="Data Conquest — Data • Ideas • Impact"
+                className="max-h-24 sm:max-h-28 w-auto object-contain mx-auto lg:mx-0"
               />
             </div>
 
