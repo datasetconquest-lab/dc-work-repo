@@ -26,11 +26,11 @@ function BackToPortals() {
     <button
       onClick={clearPortal}
       title="Switch portal"
-      className="fixed bottom-4 right-4 z-[60] flex items-center gap-2 px-3 py-2 rounded-full
-                 bg-blue-600 text-white text-sm font-medium shadow-lg hover:bg-blue-700
+      className="lg:hidden fixed bottom-4 right-4 z-[60] flex items-center gap-2 px-3 py-2 rounded-full
+                 bg-blue-600 text-white text-xs font-semibold shadow-md hover:bg-blue-700
                  transition-colors"
     >
-      <ArrowLeftRight className="w-4 h-4" />
+      <ArrowLeftRight className="w-3.5 h-3.5" />
       Switch Portal
     </button>
   );

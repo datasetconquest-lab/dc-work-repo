@@ -61,7 +61,7 @@ router.post('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res: 
 router.get('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const users = await User.find({})
-      .select('email full_name employee_id avatar_url role is_active restrict_by_ip allowed_ips ip_last_login late_permission_dates created_at updated_at')
+      .select('email full_name employee_id avatar_url role is_active is_archived restrict_by_ip allowed_ips ip_last_login late_permission_dates created_at updated_at')
       .sort({ created_at: -1 });
 
     const formattedUsers = users.map(user => ({
@@ -72,6 +72,7 @@ router.get('/', authMiddleware, adminMiddleware, async (req: AuthRequest, res: R
       avatar_url: user.avatar_url,
       role: user.role,
       is_active: user.is_active,
+      is_archived: !!(user as any).is_archived,
       restrict_by_ip: (user as any).restrict_by_ip,
       allowed_ips: (user as any).allowed_ips,
       ip_last_login: (user as any).ip_last_login,
@@ -194,40 +195,67 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
     }
 
     const updateData: any = { updated_at: new Date() };
-    const { full_name, avatar_url, employee_id, is_active, restrict_by_ip, allowed_ips, late_permission_dates } = req.body;
+    const { full_name, email, password, role, avatar_url, employee_id, is_active, is_archived, restrict_by_ip, allowed_ips, late_permission_dates } = req.body;
 
     if (full_name !== undefined) updateData.full_name = full_name;
     if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
-    if (employee_id !== undefined && req.user?.role === 'admin') {
-      const clean = typeof employee_id === 'string' ? employee_id.trim() : employee_id;
-      if (!clean) {
-        updateData.$unset = { ...(updateData.$unset || {}), employee_id: 1 };
-      } else {
-        updateData.employee_id = clean;
+
+    if (req.user?.role === 'admin') {
+      if (email !== undefined && email.trim()) {
+        const cleanEmail = email.trim().toLowerCase();
+        const existing = await User.findOne({ email: cleanEmail, _id: { $ne: objectId } });
+        if (existing) {
+          return res.status(400).json({ error: 'Another user already has this email' });
+        }
+        updateData.email = cleanEmail;
       }
-    }
-    if (is_active !== undefined && req.user?.role === 'admin') updateData.is_active = is_active;
-    if (restrict_by_ip !== undefined && req.user?.role === 'admin') updateData.restrict_by_ip = restrict_by_ip;
-    if (allowed_ips !== undefined && req.user?.role === 'admin') updateData.allowed_ips = allowed_ips;
-    if (late_permission_dates !== undefined && req.user?.role === 'admin') {
-      if (!Array.isArray(late_permission_dates)) {
-        return res.status(400).json({ error: 'late_permission_dates must be an array of YYYY-MM-DD strings' });
+
+      if (password !== undefined && password) {
+        const validation = validatePassword(password);
+        if (!validation.isValid) {
+          return res.status(400).json({ error: validation.errors.join(' ') });
+        }
+        updateData.password_hash = await hashPassword(password);
       }
-      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-      const cleaned = Array.from(new Set(
-        late_permission_dates
-          .map((d: unknown) => (typeof d === 'string' ? d.trim() : ''))
-          .filter((d: string) => dateRe.test(d))
-      )).sort();
-      updateData.late_permission_dates = cleaned;
+
+      if (role !== undefined && ['admin', 'member', 'tl', 'manager'].includes(role)) {
+        updateData.role = role;
+      }
+
+      if (is_active !== undefined) updateData.is_active = is_active;
+      if (is_archived !== undefined) updateData.is_archived = is_archived;
+      if (restrict_by_ip !== undefined) updateData.restrict_by_ip = restrict_by_ip;
+      if (allowed_ips !== undefined) updateData.allowed_ips = allowed_ips;
+
+      if (employee_id !== undefined) {
+        const clean = typeof employee_id === 'string' ? employee_id.trim() : employee_id;
+        if (!clean) {
+          updateData.$unset = { ...(updateData.$unset || {}), employee_id: 1 };
+        } else {
+          updateData.employee_id = clean;
+        }
+      }
+
+      if (late_permission_dates !== undefined) {
+        if (!Array.isArray(late_permission_dates)) {
+          return res.status(400).json({ error: 'late_permission_dates must be an array of YYYY-MM-DD strings' });
+        }
+        const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+        const cleaned = Array.from(new Set(
+          late_permission_dates
+            .map((d: unknown) => (typeof d === 'string' ? d.trim() : ''))
+            .filter((d: string) => dateRe.test(d))
+        )).sort();
+        updateData.late_permission_dates = cleaned;
+      }
     }
 
-    if (Object.keys(updateData).length === 1) {
+    if (Object.keys(updateData).length === 1 && !updateData.$unset) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
     const user = await User.findByIdAndUpdate(objectId, updateData, { new: true })
-      .select('email full_name employee_id avatar_url role is_active late_permission_dates created_at updated_at');
+      .select('email full_name employee_id avatar_url role is_active is_archived late_permission_dates created_at updated_at');
 
     if (!user) {
       return res.status(404).json({ error: 'Profile not found' });
@@ -241,6 +269,7 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
       avatar_url: user.avatar_url,
       role: user.role,
       is_active: user.is_active,
+      is_archived: !!(user as any).is_archived,
       late_permission_dates: (user as any).late_permission_dates || [],
       created_at: user.created_at,
       updated_at: user.updated_at
@@ -250,7 +279,7 @@ router.put('/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete profile (admin only)
+// Delete profile (admin only) - Soft deletes/archives to preserve all tasks, messages, and DB records
 router.delete('/:id', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -260,23 +289,59 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req: AuthRequest, 
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
-    const user = await User.findByIdAndDelete(objectId)
-      .select('email full_name');
-
+    const user = await User.findById(objectId);
     if (!user) {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
+    // Soft delete: hide user from user page while preserving all their info and tasks in database and website
+    user.is_archived = true;
+    user.is_active = false;
+    user.updated_at = new Date();
+    await user.save();
+
     res.json({
-      message: 'Profile deleted successfully',
+      message: 'User archived and removed from user page successfully (records and tasks preserved)',
       profile: {
         id: user._id.toString(),
         email: user.email,
-        full_name: user.full_name
+        full_name: user.full_name,
+        is_archived: true,
+        is_active: false
       }
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to delete profile' });
+  }
+});
+
+// Restore archived user (admin only)
+router.post('/:id/restore', authMiddleware, adminMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const objectId = toObjectId(id);
+    if (!objectId) return res.status(400).json({ error: 'Invalid user ID' });
+
+    const user = await User.findById(objectId);
+    if (!user) return res.status(404).json({ error: 'Profile not found' });
+
+    user.is_archived = false;
+    user.is_active = true;
+    user.updated_at = new Date();
+    await user.save();
+
+    res.json({
+      message: 'User restored successfully',
+      profile: {
+        id: user._id.toString(),
+        email: user.email,
+        full_name: user.full_name,
+        is_archived: false,
+        is_active: true
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to restore profile' });
   }
 });
 

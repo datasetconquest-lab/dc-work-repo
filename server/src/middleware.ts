@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, isIpAllowed, isGloballyAllowedIp, findUserById, checkDesktopOfficeAccess } from './auth.js';
+import { verifyToken, isIpAllowed, isGloballyAllowedIp, getDynamicServerIps, findUserById, getEffectiveClientIp } from './auth.js';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -39,12 +39,16 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
     if (user.restrict_by_ip !== false) {
       const forwarded = req.headers['x-forwarded-for'] as string;
       const realIp = req.headers['x-real-ip'] as string;
-      let clientIP = forwarded ? forwarded.split(',')[0].trim() : (realIp || req.ip || req.socket.remoteAddress || 'unknown');
+      let rawClientIP = forwarded ? forwarded.split(',')[0].trim() : (realIp || req.ip || req.socket.remoteAddress || 'unknown');
 
-      clientIP = clientIP.replace(/^::ffff:/, '');
+      rawClientIP = rawClientIP.replace(/^::ffff:/, '');
+      const clientIP = await getEffectiveClientIp(rawClientIP);
 
       const allowedIPs = user.allowed_ips
-        ? user.allowed_ips.split(',').map((ip: string) => ip.trim()).filter((ip: string) => ip.length > 0)
+        ? user.allowed_ips
+            .split(',')
+            .map((ip: string) => ip.trim())
+            .filter((ip: string) => ip.length > 0 && ip !== '127.0.0.1' && ip !== '::1' && ip.toLowerCase() !== 'localhost')
         : [];
 
       // DEBUG: Log IP check details
@@ -54,28 +58,15 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
 
       const isExempted = isAuthMe || isOwnProfile || isAdminSafety;
 
-      // Desktop exe: requests arrive via loopback — enforce the office network
-      // using the machine's PUBLIC IP (mirrors the website's per-request check).
       if (!isExempted) {
-        const desktopDenial = await checkDesktopOfficeAccess(clientIP);
-        if (desktopDenial) {
-          console.warn(`[SECURITY] Desktop request blocked (outside office) for ${user.email} on ${req.method} ${req.originalUrl}`);
-          return res.status(403).json({
-            error: `Access Denied: ${desktopDenial}`,
-            code: 'IP_BLOCKED',
-            detectedIp: clientIP
-          });
-        }
-      }
-
-      if (allowedIPs.length > 0 && !isExempted) {
+        await getDynamicServerIps();
         const ipAllowed = isGloballyAllowedIp(clientIP)
-          || allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP));
+          || (allowedIPs.length > 0 && allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP)));
 
         if (!ipAllowed) {
-          console.warn(`[SECURITY] Blocked request from ${clientIP} for user ${user.email} on ${req.method} ${req.originalUrl}. Allowed: ${user.allowed_ips}`);
+          console.warn(`[SECURITY] Blocked request from ${clientIP} for user ${user.email} on ${req.method} ${req.originalUrl}. Strict requirement: 223.185.`);
           return res.status(403).json({
-            error: `Access Denied: Your IP (${clientIP}) is not authorized. This site is restricted to the office network.`,
+            error: `Access Denied: Your IP (${clientIP}) is not authorized. Access is strictly restricted to the office network (IP must start with 223.185.).`,
             code: 'IP_BLOCKED',
             detectedIp: clientIP
           });

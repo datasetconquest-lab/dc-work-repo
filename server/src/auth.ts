@@ -124,27 +124,58 @@ function ipv4InCidr(ip: string, cidr: string): boolean {
   return (ipNum & mask) === (netNum & mask);
 }
 
-// Org-wide always-allowed IPs / CIDRs, applied to EVERY user in addition to
-// their own allowed_ips. Use this for a shared public range whose exact address
-// changes daily but stays within a block, e.g. GLOBAL_ALLOWED_IPS=103.218.112.0/24
-const GLOBAL_ALLOWED_IPS: string[] = (process.env.GLOBAL_ALLOWED_IPS || '')
+const REQUIRED_IP_PREFIX = process.env.REQUIRED_IP_PREFIX || '223.185.';
+
+// Org-wide always-allowed IPs / CIDRs
+const GLOBAL_ALLOWED_IPS: string[] = (process.env.GLOBAL_ALLOWED_IPS || '223.185.0.0/16')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
-export function isGloballyAllowedIp(clientIpRaw: string): boolean {
-  return GLOBAL_ALLOWED_IPS.some((range) => isIpAllowed(clientIpRaw, range));
+let dynamicServerIps: string[] = [];
+let lastDynamicIpFetch = 0;
+
+export async function getDynamicServerIps(): Promise<string[]> {
+  const now = Date.now();
+  if (now - lastDynamicIpFetch < 15_000 && dynamicServerIps.length > 0) {
+    return dynamicServerIps;
+  }
+  try {
+    const { ServerIpConfig } = await import('./models/ServerIpConfig.js');
+    const records = await ServerIpConfig.find({}).lean();
+    dynamicServerIps = records.map((r: any) => String(r.ip).trim()).filter(Boolean);
+    lastDynamicIpFetch = now;
+  } catch (err) {
+    // Fallback if collection not ready
+  }
+  return dynamicServerIps;
 }
 
-// ---- Desktop (exe) office-network enforcement -----------------------------
-// The desktop app's bundled backend only ever sees loopback/LAN client IPs, so
-// the normal allow-list cannot identify the office network. When
-// DESKTOP_ENFORCE_OFFICE_IP=1 (set only by the Electron wrapper), requests from
-// loopback/private addresses are validated against the machine's PUBLIC IP,
-// which must fall inside GLOBAL_ALLOWED_IPS — exactly like the website.
+export function refreshDynamicServerIps(ips: string[]) {
+  dynamicServerIps = ips;
+  lastDynamicIpFetch = Date.now();
+}
 
-export function desktopOfficeEnforcementEnabled(): boolean {
-  return process.env.DESKTOP_ENFORCE_OFFICE_IP === '1' && GLOBAL_ALLOWED_IPS.length > 0;
+export function isGloballyAllowedIp(clientIpRaw: string): boolean {
+  const clientIp = normalizeClientIp(clientIpRaw);
+  if (!clientIp || clientIp === 'unknown') return false;
+
+  // Strict primary check: only IPs starting with 223.185.
+  if (clientIp.startsWith(REQUIRED_IP_PREFIX)) {
+    return true;
+  }
+
+  // Check env allowed IPs
+  if (GLOBAL_ALLOWED_IPS.some((range) => isIpAllowed(clientIpRaw, range))) {
+    return true;
+  }
+
+  // Check dynamic server-allocated IPs
+  if (dynamicServerIps.some((range) => isIpAllowed(clientIpRaw, range))) {
+    return true;
+  }
+
+  return false;
 }
 
 export function isLoopbackOrPrivate(ipRaw: string): boolean {
@@ -175,15 +206,22 @@ export async function getPublicIp(): Promise<string | null> {
   return null;
 }
 
+// Resolves client IP to its true external public IP if connecting from loopback/LAN/hotspot
+export async function getEffectiveClientIp(clientIP: string): Promise<string> {
+  const norm = normalizeClientIp(clientIP);
+  if (isLoopbackOrPrivate(norm)) {
+    const pub = await getPublicIp();
+    if (pub) return pub;
+  }
+  return norm;
+}
+
 // Returns null when allowed; otherwise a human-readable denial reason.
 // Fail-closed: if the public IP cannot be determined, access is denied.
 export async function checkDesktopOfficeAccess(clientIP: string): Promise<string | null> {
-  if (!desktopOfficeEnforcementEnabled() || !isLoopbackOrPrivate(clientIP)) return null;
-  const pub = await getPublicIp();
-  if (pub && isGloballyAllowedIp(pub)) return null;
-  return pub
-    ? `This app can only be used from the office network. Your public IP (${pub}) is not authorized.`
-    : 'This app can only be used from the office network (could not verify your public IP).';
+  const effectiveIp = await getEffectiveClientIp(clientIP);
+  if (isGloballyAllowedIp(effectiveIp)) return null;
+  return `This workspace can only be used from the office network. Your IP (${effectiveIp}) is not authorized. Must start with ${REQUIRED_IP_PREFIX}`;
 }
 
 export function isIpAllowed(clientIpRaw: string, allowed: string): boolean {
@@ -191,12 +229,12 @@ export function isIpAllowed(clientIpRaw: string, allowed: string): boolean {
   const allowedTrim = allowed.trim();
   if (!allowedTrim) return false;
 
-  // Handle localhost
-  if (allowedTrim.toLowerCase() === 'localhost') return clientIp === '127.0.0.1' || clientIp === '::1';
+  // Airtel network dynamic IP: 223.185.x.x
+  if (clientIp.startsWith('223.185.')) return true;
 
-  // Support wildcard syntax (e.g. 103.218.112.*)
+  // Support wildcard syntax (e.g. 103.218.112.*, 223.185.*, 223.185.*.*)
   if (allowedTrim.includes('*')) {
-    const pattern = allowedTrim.replace(/\*/g, '').trim();
+    const pattern = allowedTrim.replace(/(\.\*)+$/, '').replace(/\*/g, '').trim();
     return clientIp.startsWith(pattern);
   }
 
@@ -237,7 +275,7 @@ export async function createUser(
     role: 'member',
     is_active: true,
     password_hash: hashedPassword,
-    allowed_ips: '127.0.0.1, ::1, localhost, 192.168.0.0/16',
+    allowed_ips: '223.185.0.0/16',
     restrict_by_ip: true
   });
 
@@ -253,7 +291,8 @@ export async function createUser(
   };
 }
 
-export async function authenticateUser(email: string, password: string, clientIP: string = 'localhost') {
+export async function authenticateUser(email: string, password: string, clientIP: string = 'unknown') {
+  const effectiveIp = await getEffectiveClientIp(clientIP);
   const user = await findUserByEmail(email);
 
   if (!user) {
@@ -262,18 +301,51 @@ export async function authenticateUser(email: string, password: string, clientIP
       user_id: undefined,
       login_time: new Date(),
       success: false,
-      ip_address: clientIP,
+      ip_address: effectiveIp,
       user_agent: 'User not found'
     }).catch(() => { });
     throw new Error('Invalid email or password');
   }
 
+  // 1. Strict IP Restriction Check - Performed FIRST before credentials
+  const restrictByIP = user.restrict_by_ip !== false;
+
+  if (restrictByIP) {
+    const allowedIPs = user.allowed_ips
+      ? user.allowed_ips
+          .split(',')
+          .map((ip: string) => ip.trim())
+          .filter((ip: string) => ip.length > 0 && ip !== '127.0.0.1' && ip !== '::1' && ip.toLowerCase() !== 'localhost')
+      : [];
+
+    await getDynamicServerIps();
+
+    // The org-wide global range always grants access, even if a user has no personal allow-list configured.
+    const globallyAllowed = isGloballyAllowedIp(effectiveIp);
+    const userAllowed = allowedIPs.some((allowedIP: string) => isIpAllowed(effectiveIp, allowedIP));
+
+    if (!globallyAllowed && !userAllowed) {
+      await LoginLog.create({
+        user_id: user._id,
+        login_time: new Date(),
+        success: false,
+        ip_address: effectiveIp,
+        user_agent: `IP blocked: ${effectiveIp} does not start with ${REQUIRED_IP_PREFIX}`
+      }).catch(() => { });
+      const err: any = new Error(`Access Denied: Your IP (${effectiveIp}) is not authorized. Access is strictly restricted to the office network (IP must start with ${REQUIRED_IP_PREFIX}) or an administrator-allocated WFH IP.`);
+      err.code = 'IP_BLOCKED';
+      err.detectedIp = effectiveIp;
+      throw err;
+    }
+  }
+
+  // 2. User status checks
   if (!user.is_active) {
     await LoginLog.create({
       user_id: user._id,
       login_time: new Date(),
       success: false,
-      ip_address: clientIP,
+      ip_address: effectiveIp,
       user_agent: 'User account inactive'
     }).catch(() => { });
     throw new Error('User account is inactive. Contact administrator.');
@@ -284,6 +356,7 @@ export async function authenticateUser(email: string, password: string, clientIP
     throw new Error('No password set for this user. Contact administrator.');
   }
 
+  // 3. Password Verification
   const passwordMatch = await comparePassword(password, storedHash);
 
   if (!passwordMatch) {
@@ -291,58 +364,10 @@ export async function authenticateUser(email: string, password: string, clientIP
       user_id: user._id,
       login_time: new Date(),
       success: false,
-      ip_address: clientIP,
+      ip_address: effectiveIp,
       user_agent: 'Invalid password'
     }).catch(() => { });
     throw new Error('Invalid email or password');
-  }
-
-  const restrictByIP = user.restrict_by_ip !== false;
-
-  if (restrictByIP) {
-    // Desktop exe: the request arrives via loopback, so validate the machine's
-    // PUBLIC IP against the office ranges (mirrors the website's behavior).
-    const desktopDenial = await checkDesktopOfficeAccess(clientIP);
-    if (desktopDenial) {
-      await LoginLog.create({
-        user_id: user._id,
-        login_time: new Date(),
-        success: false,
-        ip_address: clientIP,
-        user_agent: 'Desktop login blocked: outside office network'
-      }).catch(() => { });
-      throw new Error(desktopDenial);
-    }
-
-    const allowedIPs = user.allowed_ips ? user.allowed_ips.split(',').map((ip: string) => ip.trim()).filter((ip: string) => ip.length > 0) : [];
-
-    // The org-wide global range always grants access, even if a user has no
-    // personal allow-list configured.
-    const globallyAllowed = isGloballyAllowedIp(clientIP);
-
-    if (!globallyAllowed && allowedIPs.length === 0) {
-      await LoginLog.create({
-        user_id: user._id,
-        login_time: new Date(),
-        success: false,
-        ip_address: clientIP,
-        user_agent: 'No allowed IPs configured'
-      }).catch(() => { });
-      throw new Error('No allowed IP addresses configured. Contact administrator for access.');
-    }
-
-    const ipAllowed = globallyAllowed || allowedIPs.some((allowedIP: string) => isIpAllowed(clientIP, allowedIP));
-
-    if (!ipAllowed) {
-      await LoginLog.create({
-        user_id: user._id,
-        login_time: new Date(),
-        success: false,
-        ip_address: clientIP,
-        user_agent: `IP blocked: not in whitelist. Allowed IPs: ${allowedIPs.join(', ')}`
-      }).catch(() => { });
-      throw new Error(`Login not allowed from IP: ${clientIP}. This site is accessible only from office network. Contact administrator to enable WFH access.`);
-    }
   }
 
   // Update login history

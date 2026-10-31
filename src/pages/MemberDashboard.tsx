@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { CheckSquare, Calendar, TrendingUp, Users } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { useNotifications } from '../components/Notifications';
+import { WorkAnalyticsCharts } from '../components/WorkAnalyticsCharts';
 
 interface TaskCounts {
   total: number;
@@ -200,6 +201,9 @@ export function MemberDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Work & Attendance Analytics Charts (Hours per day & Days per month) */}
+        <WorkAnalyticsCharts title="My Work & Attendance Analytics" />
 
         {/* Quick Stats */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

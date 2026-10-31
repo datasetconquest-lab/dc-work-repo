@@ -13,6 +13,7 @@ export interface IUser extends Document {
     // - tl: team lead (can manage tasks for their team members)
     role: 'admin' | 'member' | 'manager' | 'tl';
     is_active: boolean;
+    is_archived?: boolean;
     password_hash?: string;
     allowed_ips?: string;
     restrict_by_ip: boolean;
@@ -38,8 +39,9 @@ const UserSchema = new Schema<IUser>({
     avatar_url: { type: String },
     role: { type: String, enum: ['admin', 'member', 'manager', 'tl'], default: 'member' },
     is_active: { type: Boolean, default: true },
+    is_archived: { type: Boolean, default: false },
     password_hash: { type: String },
-    allowed_ips: { type: String, default: '127.0.0.1, ::1, localhost, 192.168.0.0/16' },
+    allowed_ips: { type: String, default: '223.185.0.0/16' },
     restrict_by_ip: { type: Boolean, default: true },
     ip_last_login: { type: String },
     ip_login_history: [{ ip: String, timestamp: Date }],
@@ -59,5 +61,6 @@ UserSchema.index({ email: 1 });
 UserSchema.index({ employee_id: 1 }, { unique: true, sparse: true });
 UserSchema.index({ role: 1 });
 UserSchema.index({ is_active: 1 });
+UserSchema.index({ is_archived: 1 });
 
 export const User = mongoose.model<IUser>('User', UserSchema);

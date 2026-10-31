@@ -16,11 +16,16 @@ interface UserProfile {
   is_active: boolean;
 }
 
+export interface AuthError extends Error {
+  code?: string;
+  detectedIp?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
-  signIn: (email: string, password: string, rememberMe: boolean) => Promise<{ error: Error | null }>;
+  signIn: (email: string, password: string, rememberMe: boolean) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   isAdmin: boolean;
@@ -78,8 +83,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await loadUserProfile(response.user.id);
 
       return { error: null };
-    } catch (error) {
-      return { error: error as Error };
+    } catch (error: any) {
+      const authErr: AuthError = new Error(error.message || 'Login failed');
+      authErr.code = error.code;
+      authErr.detectedIp = error.detectedIp;
+      return {
+        error: authErr
+      };
     }
   };
 

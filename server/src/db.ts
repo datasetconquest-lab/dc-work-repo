@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import dns from 'node:dns';
+
+// Fix Node.js SRV query lookup issues on Windows / ISP routers for mongodb+srv://
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+} catch (e) {
+  // Ignore if custom DNS cannot be set
+}
 
 dotenv.config();
 
