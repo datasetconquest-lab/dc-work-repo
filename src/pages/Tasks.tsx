@@ -660,23 +660,23 @@ export function Tasks() {
                     )}
 
                     {(task.completion_results || task.completion_values || task.completion_summary) && (
-                      <div className="mb-2 space-y-2 text-xs text-gray-700 dark:text-gray-200 border-t border-green-200 dark:border-green-800 pt-2 bg-green-50/40 -mx-1 px-2 rounded">
+                      <div className="mb-2 p-3.5 space-y-2.5 text-xs text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-800 bg-slate-100/90 dark:bg-[#0F172A] rounded-xl">
                         {task.completion_results && (
                           <div>
-                            <span className="font-medium">Results:</span>
-                            <div className="mt-1"><MarkdownRenderer>{task.completion_results}</MarkdownRenderer></div>
+                            <span className="font-extrabold text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block mb-1">Results:</span>
+                            <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 font-mono text-[11px] leading-relaxed text-slate-900 dark:text-slate-100"><MarkdownRenderer>{task.completion_results}</MarkdownRenderer></div>
                           </div>
                         )}
                         {task.completion_values && (
                           <div>
-                            <span className="font-medium">Values:</span>
-                            <div className="mt-1"><MarkdownRenderer>{task.completion_values}</MarkdownRenderer></div>
+                            <span className="font-extrabold text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block mb-1">Values:</span>
+                            <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 font-mono text-[11px] leading-relaxed text-slate-900 dark:text-slate-100"><MarkdownRenderer>{task.completion_values}</MarkdownRenderer></div>
                           </div>
                         )}
                         {task.completion_summary && (
                           <div>
-                            <span className="font-medium">Summary:</span>
-                            <div className="mt-1"><MarkdownRenderer>{task.completion_summary}</MarkdownRenderer></div>
+                            <span className="font-extrabold text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block mb-1">Summary:</span>
+                            <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 text-[11px] leading-relaxed text-slate-900 dark:text-slate-100"><MarkdownRenderer>{task.completion_summary}</MarkdownRenderer></div>
                           </div>
                         )}
                       </div>
@@ -1241,25 +1241,25 @@ export function Tasks() {
                 )}
 
                 {(viewingTask.completion_results || viewingTask.completion_values || viewingTask.completion_summary) && (
-                  <section className="border-t pt-4">
-                    <h4 className="text-xs font-bold uppercase text-green-600 dark:text-green-400 mb-3">Completion Record</h4>
-                    <div className="space-y-3">
+                  <section className="border-t border-slate-200 dark:border-slate-800 pt-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-3">Completion Record</h4>
+                    <div className="space-y-3 p-3.5 bg-slate-100/90 dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl">
                       {viewingTask.completion_results && (
                         <div>
-                          <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase block">Results</span>
-                          <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{viewingTask.completion_results}</p>
+                          <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase block mb-1">Results</span>
+                          <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 font-mono whitespace-pre-wrap">{viewingTask.completion_results}</div>
                         </div>
                       )}
                       {viewingTask.completion_values && (
                         <div>
-                          <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase block">Values</span>
-                          <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{viewingTask.completion_values}</p>
+                          <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase block mb-1">Values</span>
+                          <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 font-mono whitespace-pre-wrap">{viewingTask.completion_values}</div>
                         </div>
                       )}
                       {viewingTask.completion_summary && (
                         <div>
-                          <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase block">Overview Summary</span>
-                          <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{viewingTask.completion_summary}</p>
+                          <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase block mb-1">Overview Summary</span>
+                          <div className="p-2.5 rounded-lg bg-white dark:bg-[#151F32] border border-slate-200/80 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 whitespace-pre-wrap">{viewingTask.completion_summary}</div>
                         </div>
                       )}
                     </div>
